@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use hub_proto::{
-    codes, method, ApplySceneParams, ReadParams, Request, Response, RpcError, SetBlockedParams,
-    SetEnabledParams, SetScenesParams, WriteParams,
+    codes, method, ApplySceneParams, ReadParams, ReloadParams, Request, Response, RpcError,
+    SetBlockedParams, SetEnabledParams, SetScenesParams, WriteParams,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -49,6 +49,13 @@ pub async fn dispatch(service: Arc<Service>, request: Request) -> Option<Respons
             })
             .await
             {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        method::ADAPTERS_RELOAD => match parse::<ReloadParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.reload_adapters(&params)).await {
                 Ok(result) => success(id, &result),
                 Err(err) => Response::failure(id, err),
             },

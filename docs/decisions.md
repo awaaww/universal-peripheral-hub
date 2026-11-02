@@ -284,14 +284,18 @@ The adapter cannot tell them apart from the pipe alone, so it:
 * retries the probe three times with a 150 ms gap during enumeration;
 * treats a missing reply as `Transient` (never as success);
 * exposes `conflict` as a read-only bool derived from `ATK HUB.exe` being
-  present, so the UI can say "ATK HUB is running — close it if reads look stale";
+  present, so the UI can say "ATK HUB is running" without claiming the reads are
+  broken — they often are not, and later measurements read every value while it
+  ran; closing it is the workaround, not a requirement;
 * documents "move the mouse once" in the README, because that is the real fix
   for the sleep case.
 
 This is deliberately conservative: a false "conflict" is visible and harmless,
 a false "success" is not.
 
-When ATK HUB is running and the mouse's control collection stays silent, the
-adapter still emits one device carrying only the read-only `mouse.conflict`
-bool, so the panel shows "ATK HUB is running" instead of an empty adapter row.
+When the mouse's control collection stays silent without the process being the
+explanation, the adapter can only report what it knows: one device carrying only
+the read-only `mouse.conflict` bool when ATK HUB is present, an empty list
+otherwise. The panel therefore shows "ATK HUB is running" instead of an empty
+adapter row, and `Rescan` re-enumerates after the device wakes up.
 It never invents battery or DPI values for a device it could not talk to.

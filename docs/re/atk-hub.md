@@ -339,14 +339,17 @@ cover the whole block (10 bytes at address 0 for the rate/max/current block,
 
 ### Observed conflict and idle behaviour (important for the adapter)
 
-With ATK HUB running, opening the vendor collection still succeeds, `WriteFile`
-still reports success, but `ReadFile` times out. The same happens when the
-wireless mouse is idle, and replies come back immediately again once the device
-is woken by real input. So:
+Opening the vendor collection and `WriteFile` always succeed; whether a reply
+comes back is what varies. It was observed both ways *with ATK HUB running*:
+silence on some runs, and on a later run all seven values came back while the
+process was still up. An idle wireless mouse produces the same silence, and
+replies resume as soon as it is moved. So the process being present is a hint,
+not a verdict:
 
 * "open ok + write ok + no reply" is **not** proof the write reached anything;
 * the adapter must retry once, then surface a `conflict` capability (ATK HUB
-  running) or a transient error, never a silent success;
+  running) or a transient error, never a silent success, and the panel must be
+  able to re-enumerate once the device answers again;
 * we do not yet know whether ATK HUB and this adapter can coexist for *writes*;
   that question is deferred to stage 3b, where a write is attempted with and
   without ATK HUB running and the observed values are compared.

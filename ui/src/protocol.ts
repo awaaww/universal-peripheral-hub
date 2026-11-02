@@ -8,7 +8,8 @@ export type CapabilityKind =
   | { type: "bool" }
   | { type: "enum"; options: { value: string; label: string }[] }
   | { type: "rgb" }
-  | { type: "bytes"; max_len: number };
+  | { type: "bytes"; max_len: number }
+  | { type: "text"; max_len: number };
 
 export type SideEffect =
   | "signal_renegotiation"
@@ -60,7 +61,8 @@ export type CapabilityValue =
   | { type: "bool"; value: boolean }
   | { type: "enum"; value: string }
   | { type: "rgb"; value: { r: number; g: number; b: number } }
-  | { type: "bytes"; value: number[] };
+  | { type: "bytes"; value: number[] }
+  | { type: "text"; value: string };
 
 export interface WriteOutcome {
   value: CapabilityValue;

@@ -55,6 +55,11 @@ pub mod method {
     pub const CAPABILITY_READ: &str = "capability.read";
     pub const CAPABILITY_WRITE: &str = "capability.write";
     pub const ADAPTER_SET_ENABLED: &str = "adapter.set_enabled";
+    /// Re-enumerate adapters, optionally only one. The hub caches the devices
+    /// an adapter reported when it was loaded, so a device that was asleep (or
+    /// held by the vendor tool) at that moment stays missing until the adapter
+    /// is rebuilt — this is that rebuild, exposed to the panel's Rescan button.
+    pub const ADAPTERS_RELOAD: &str = "adapters.reload";
     /// Stop (or resume) talking to one device. The persisted token is
     /// adapter-specific and opaque to the client.
     pub const DEVICE_SET_BLOCKED: &str = "device.set_blocked";
@@ -248,6 +253,13 @@ pub struct WriteParams {
 pub struct SetEnabledParams {
     pub adapter: String,
     pub enabled: bool,
+}
+
+/// `adapters.reload`: re-enumerate every adapter, or just one.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ReloadParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<String>,
 }
 
 /// Address a device either by its id (when it is visible) or by the persisted

@@ -13,10 +13,12 @@ descriptors rather than hard-coded per vendor.
 > the ATK wireless mouse and reads battery, charging state, wireless link,
 > firmware version, report rate and the active DPI slot; it does not write
 > anything yet. The ATK keyboard speaks VIA/QMK and the headset uses a separate
-> channel: both are visible as *not implemented* rather than faked. ATK HUB must
-> be closed for reliable reads (the adapter detects it and says so), and an idle
-> wireless mouse stops answering until it is moved. HID writes, auto-start and
-> installers are not implemented yet — see the roadmap.
+> channel: both are visible as *not implemented* rather than faked. ATK HUB does
+> not have to be closed: reads returned real values while it was running in our
+> tests. If the control collection goes silent (the vendor tool holding it, or
+> an idle wireless mouse), the panel says so and `Rescan` rebuilds the adapter;
+> moving the mouse once is usually enough. HID writes, auto-start and installers
+> are not implemented yet — see the roadmap.
 
 ## Status / roadmap
 

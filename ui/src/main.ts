@@ -63,6 +63,35 @@ function applySnapshot(snapshot: Snapshot): void {
   paint();
 }
 
+/** Re-enumerate adapters, then read every capability again.
+ *
+ * `devices.list` only re-reads what the hub cached at adapter load, so a
+ * wireless mouse that was asleep then stays missing until the adapter is
+ * rebuilt. Rescan exists to make that rebuild reachable without a restart; an
+ * older hubd that does not know the method still gets a plain refresh.
+ */
+async function rescan(): Promise<void> {
+  state.loading = true;
+  paint();
+  void loadScenes();
+  try {
+    let snapshot: Snapshot;
+    try {
+      snapshot = await call<Snapshot>("adapters.reload", {});
+    } catch {
+      snapshot = await call<Snapshot>("devices.list", null);
+    }
+    applySnapshot(snapshot);
+    await loadValues(snapshot.devices);
+  } catch (err) {
+    state.online = false;
+    state.error = describe(err).message;
+  } finally {
+    state.loading = false;
+    paint();
+  }
+}
+
 async function refresh(): Promise<void> {
   state.loading = true;
   paint();
@@ -206,6 +235,8 @@ function valueOf(capability: CapabilityDescriptor, value: CapabilityValue | unde
       return `#${[value.value.r, value.value.g, value.value.b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
     case "bytes":
       return `${value.value.length} bytes`;
+    case "text":
+      return value.value.length > 0 ? value.value : "—";
   }
 }
 
@@ -385,7 +416,7 @@ function toggleBlockedList(adapterId: string): void {
 const actions: Actions = {
   write: (device, capability, value) => write(device, capability, value),
   toggleAdapter: (adapter) => void toggleAdapter(adapter),
-  rescan: () => void refresh(),
+  rescan: () => void rescan(),
   ignoreDevice: (device) => void ignoreDevice(device),
   restoreDevice: (adapter, token) => void restoreDevice(adapter, token),
   toggleBlockedList: (adapterId) => toggleBlockedList(adapterId),

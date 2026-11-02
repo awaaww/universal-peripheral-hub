@@ -495,6 +495,15 @@ function buildControl(
       return el("div", { class: "control" }, [toggle, el("span", { class: "muted", text: current ? "On" : "Off" })]);
     }
     case "enum": {
+      // A disabled dropdown still renders every option, which reads like the
+      // device is offering a choice it will not accept. Read-only enums show
+      // the current label instead.
+      if (disabled) {
+        const current = value?.type === "enum" ? value.value : undefined;
+        const label =
+          capability.kind.options.find((option) => option.value === current)?.label ?? current ?? "—";
+        return el("div", { class: "control" }, [el("span", { class: "mono muted", text: label })]);
+      }
       const select = el("select", { class: "select", disabled }) as HTMLSelectElement;
       for (const option of capability.kind.options) {
         const opt = el("option", { value: option.value, text: option.label }) as HTMLOptionElement;
@@ -522,6 +531,10 @@ function buildControl(
         });
       });
       return el("div", { class: "control" }, [picker, el("span", { class: "mono muted", text: current })]);
+    }
+    case "text": {
+      const shown = value?.type === "text" && value.value.length > 0 ? value.value : "—";
+      return el("div", { class: "control" }, [el("span", { class: "mono muted", text: shown })]);
     }
     case "bytes": {
       const hex =

@@ -7,8 +7,8 @@ use hub_core::device::DeviceDescriptor;
 use hub_core::scene::ScenesFile;
 use hub_core::{CapabilityValue, Hub, HubError, Result, Settings, SettingsStore, WriteOutcome};
 use hub_proto::{
-    ApplySceneParams, DevicesResult, HelloResult, ReadResult, SceneMode, SceneRuntime,
-    ScenesResult, SetBlockedParams, SetScenesParams, PROTOCOL_VERSION,
+    ApplySceneParams, DevicesResult, HelloResult, ReadResult, ReloadParams, SceneMode,
+    SceneRuntime, ScenesResult, SetBlockedParams, SetScenesParams, PROTOCOL_VERSION,
 };
 use tokio::sync::broadcast;
 
@@ -356,6 +356,49 @@ impl Service {
             hub.unload(adapter)?;
             if hub.is_enabled(adapter) {
                 hub.load(adapter)?;
+            }
+            let settings = self.settings.lock().expect("settings mutex poisoned");
+            devices_result(&hub, settings.settings())
+        };
+
+        self.broadcast(Event::DevicesChanged(result.clone()));
+        Ok(result)
+    }
+
+    /// Re-enumerate adapters (all of them, or one).
+    ///
+    /// `Hub` caches the devices an adapter reported when it was loaded; a mouse
+    /// that was asleep at that moment stays absent until the adapter is built
+    /// again. The panel's Rescan button calls this instead of `devices.list`,
+    /// because the latter only re-reads that cache.
+    pub fn reload_adapters(&self, params: &ReloadParams) -> Result<DevicesResult> {
+        let result = {
+            let mut hub = self.hub.lock().expect("hub mutex poisoned");
+            let ids: Vec<String> = match &params.adapter {
+                Some(adapter) => {
+                    if !hub.is_registered(adapter) {
+                        return Err(HubError::new(
+                            hub_core::ErrorKind::UnknownAdapter,
+                            format!("unknown adapter `{adapter}`"),
+                        ));
+                    }
+                    vec![adapter.clone()]
+                }
+                None => hub.adapters().into_iter().map(|state| state.id).collect(),
+            };
+            for id in ids {
+                if !hub.is_enabled(&id) {
+                    continue;
+                }
+                // One adapter failing to rebuild must not stop the others: a
+                // vendor helper that is not installed is a normal state.
+                if let Err(error) = hub.unload(&id) {
+                    tracing::warn!(adapter = id, %error, "adapter could not be unloaded");
+                    continue;
+                }
+                if let Err(error) = hub.load(&id) {
+                    tracing::warn!(adapter = id, %error, "adapter could not be reloaded");
+                }
             }
             let settings = self.settings.lock().expect("settings mutex poisoned");
             devices_result(&hub, settings.settings())
