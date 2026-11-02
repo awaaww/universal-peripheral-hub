@@ -5,6 +5,11 @@ import type {
   CapabilityValue,
   DeviceDescriptor,
   HubFailure,
+  Scene,
+  SceneItem,
+  SceneOptions,
+  SceneRuntime,
+  ScenesResult,
   Snapshot,
 } from "./protocol";
 
@@ -19,6 +24,16 @@ export interface UiState {
   loading: boolean;
   /// Adapter ids whose ignored-device list is expanded in the adapters strip.
   blockedOpen: Set<string>;
+  /// Last `scenes.get` / `scenes.set` / `scene.apply` / `scenes-changed` result.
+  /// Null while the first read is still in flight.
+  scenes: ScenesResult | null;
+  /// A scenes RPC failed; shown in the same banner as a failed device action.
+  scenesError: string | null;
+  /// The running hubd answered `scenes.get` with "method not implemented".
+  /// Only then is the section hidden instead of reporting an error.
+  scenesUnsupported: boolean;
+  /// One scenes RPC at a time, so two full-document writes cannot race.
+  scenesBusy: boolean;
 }
 
 export interface Actions {
@@ -28,6 +43,8 @@ export interface Actions {
   ignoreDevice(device: DeviceDescriptor): void;
   restoreDevice(adapter: AdapterState, token: string): void;
   toggleBlockedList(adapterId: string): void;
+  applyScene(sceneId: string): void;
+  setSceneOption(option: "allow_side_effects" | "startup_apply", checked: boolean): void;
 }
 
 function key(device: string, capability: string): string {
@@ -37,9 +54,14 @@ function key(device: string, capability: string): string {
 export function render(root: HTMLElement, state: UiState, actions: Actions): void {
   clear(root);
   root.append(header(state, actions));
-  if (!state.online) root.append(offline(state, actions));
-  else if (state.error) root.append(actionError(state));
+  if (!state.online) {
+    root.append(offline(state, actions));
+  } else {
+    const error = state.error ?? state.scenesError;
+    if (error) root.append(actionError(error));
+  }
   if (state.snapshot) root.append(adapters(state.snapshot.adapters, state, actions));
+  if (state.scenes && !state.scenesUnsupported) root.append(scenes(state.scenes, state, actions));
   root.append(devices(state, actions));
   root.append(footer());
 }
@@ -80,11 +102,11 @@ function offline(state: UiState, actions: Actions): HTMLElement {
 }
 
 /** The hub answered, but the last action was refused (e.g. a block-list RPC). */
-function actionError(state: UiState): HTMLElement {
+function actionError(message: string): HTMLElement {
   return el("section", { class: "banner banner-error" }, [
     el("div", {}, [
       el("strong", { text: "That action failed" }),
-      el("p", { class: "muted", text: state.error ?? "" }),
+      el("p", { class: "muted", text: message }),
     ]),
   ]);
 }
@@ -160,6 +182,174 @@ function blockedList(adapter: AdapterState, tokens: string[], actions: Actions):
     );
   }
   return list;
+}
+
+/**
+ * The scenes document plus what the engine is doing right now. The backend
+ * owns rules and startup behaviour; the panel only edits the two options and
+ * asks for one apply, so there is no local rule editor here.
+ */
+function scenes(result: ScenesResult, state: UiState, actions: Actions): HTMLElement {
+  const section = el("section", { class: "scenes" }, [
+    el("h2", { class: "section-title", text: "Scenes" }),
+  ]);
+  const entries = Object.entries(result.document.scenes);
+  if (entries.length === 0) {
+    // A document with no scenes gets one honest line and no controls: an Apply
+    // button without a scene, or toggles with nothing to apply, would lie.
+    section.append(
+      el("p", {
+        class: "muted scene-empty",
+        text: "No scenes yet. They live in %APPDATA%\\UniversalPeripheralHub\\scenes.json.",
+      }),
+    );
+    return section;
+  }
+  const list = el("div", { class: "scene-list" });
+  for (const [id, scene] of entries) {
+    list.append(sceneRow(id, scene, result.runtime, state, actions));
+  }
+  section.append(
+    list,
+    sceneEngine(result),
+    sceneOptions(result.document.options, state, actions),
+  );
+  return section;
+}
+
+function sceneRow(
+  id: string,
+  scene: Scene,
+  runtime: SceneRuntime,
+  state: UiState,
+  actions: Actions,
+): HTMLElement {
+  const current = runtime.current_scene === id;
+  const summary = sceneSummary(scene.items);
+
+  const head = el("div", { class: "scene-head" });
+  if (current) {
+    head.append(
+      el("span", {
+        class: "scene-dot",
+        "aria-hidden": "true",
+        title: "Selected by the current rule.",
+      }),
+    );
+  }
+  head.append(el("span", { class: "scene-name", text: scene.name }));
+  if (current) head.append(el("span", { class: "scene-pill-current", text: "current" }));
+  head.append(
+    el("span", {
+      class: summary.mono ? "scene-summary mono" : "scene-summary",
+      title: summary.title,
+      text: summary.text,
+    }),
+  );
+
+  return el("div", { class: current ? "scene-row scene-row-current" : "scene-row" }, [
+    head,
+    el("button", {
+      class: "button button-small",
+      type: "button",
+      text: "Apply",
+      title: `Apply “${scene.name}” now.`,
+      disabled: state.scenesBusy,
+      onclick: () => actions.applyScene(id),
+    }),
+  ]);
+}
+
+/** `3 values`, or the capability types themselves when there are at most two. */
+function sceneSummary(items: SceneItem[]): { text: string; title: string; mono: boolean } {
+  const types = items.map((item) => item.cap_type);
+  if (types.length === 0) {
+    return { text: "0 values", title: "This scene has no items.", mono: false };
+  }
+  if (types.length <= 2) {
+    return { text: types.join(", "), title: types.join("\n"), mono: true };
+  }
+  return { text: `${types.length} values`, title: types.join("\n"), mono: false };
+}
+
+/** Engine state: baseline, current auto match, and what the last apply did. */
+function sceneEngine(result: ScenesResult): HTMLElement {
+  const { runtime, document } = result;
+  const box = el("div", { class: "scene-engine" });
+  if (!runtime.armed) {
+    box.append(
+      el("p", {
+        class: "scene-engine-line",
+        text: "Baseline not recorded yet (nothing will be written).",
+      }),
+    );
+  } else if (runtime.current_exe) {
+    if (runtime.current_scene) {
+      const name = document.scenes[runtime.current_scene]?.name ?? runtime.current_scene;
+      // "Auto" only when a rule actually picked it: a manual Apply leaves the
+      // scene in place without the rule for this exe agreeing, and claiming
+      // otherwise would be a small lie the user cannot debug.
+      const text =
+        runtime.last_source === "manual"
+          ? `Applied manually: ${name}`
+          : `Auto: ${runtime.current_exe} → ${name}`;
+      box.append(el("p", { class: "scene-engine-line", text }));
+    } else {
+      box.append(
+        el("p", {
+          class: "scene-engine-line",
+          text: `Auto: no rule matches ${runtime.current_exe}`,
+        }),
+      );
+    }
+  }
+
+  const report = runtime.last_report;
+  if (report) {
+    box.append(
+      el("p", {
+        class: "scene-report",
+        text: `Wrote ${report.written} · unchanged ${report.unchanged} · skipped ${report.skipped}`,
+      }),
+    );
+    const issues = [...(report.failed ?? []), ...(report.missing ?? [])];
+    if (issues.length > 0) {
+      const [first, ...rest] = issues;
+      box.append(
+        el("p", {
+          class: "scene-issues",
+          text: rest.length === 0 ? first : `${first} +${rest.length} more`,
+          title: issues.join("\n"),
+        }),
+      );
+    }
+  }
+  return box;
+}
+
+function sceneOptions(options: SceneOptions, state: UiState, actions: Actions): HTMLElement {
+  return el("div", { class: "scene-options" }, [
+    optionToggle(
+      "Allow changes that briefly blank the display (HDR, picture mode)",
+      Boolean(options.allow_side_effects),
+      state.scenesBusy,
+      (checked) => actions.setSceneOption("allow_side_effects", checked),
+    ),
+    optionToggle("Apply at startup", Boolean(options.startup_apply), state.scenesBusy, (checked) =>
+      actions.setSceneOption("startup_apply", checked),
+    ),
+  ]);
+}
+
+function optionToggle(
+  label: string,
+  checked: boolean,
+  disabled: boolean,
+  onchange: (checked: boolean) => void,
+): HTMLElement {
+  const input = el("input", { type: "checkbox", checked, disabled }) as HTMLInputElement;
+  input.addEventListener("change", () => onchange(input.checked));
+  return el("label", { class: "scene-option" }, [input, el("span", { text: label })]);
 }
 
 function devices(state: UiState, actions: Actions): HTMLElement {

@@ -174,3 +174,79 @@ between it and the command channel, so a push is delivered immediately.
 The reader is a separate task rather than a `select!` on `read_line`, because
 `AsyncBufReadExt::read_line` is not cancel safe: dropping it mid-line loses
 bytes that were already consumed from the socket.
+
+## D19 — The startup baseline is seeded explicitly
+
+The WinEvent hook reports *changes*, so a hub that starts while Notepad is in
+front sees nothing until the user switches away. The engine then treats that
+first real switch as the startup baseline and applies nothing — the scene for
+the app you were already using never runs.
+
+`main` therefore asks for the current foreground once, right after installing
+the hook, and feeds it to the engine as the baseline. The hook itself stays a
+pure change feed: it does not call back during setup, so the ordering is visible
+at the call site and the baseline cannot race the first change.
+
+If there is no foreground window yet (boot, lock screen), the baseline is
+deferred with a warning; the first change then becomes the baseline, which is
+the old behaviour and still safe (nothing is written).
+
+## D20 — Scenes address capabilities by `cap_type`, not flat keys
+
+The plan sketched scene items as flat keys (`monitor.brightness`), which ties a
+scene to one naming scheme and one device. The implementation uses the
+capability model from D2: an item is `{ cap_type, device?, value }`, where
+`cap_type` is the stable cross-device name.
+
+Consequences:
+
+* one scene covers every display that has `display.brightness`; an optional
+  `device` pins an item when the user really means one device;
+* items are expanded at *apply* time, so a scene saved before a monitor was
+  connected still works after it appears;
+* a `cap_type` no present device provides is reported as `missing` in the
+  apply report, not as a failure — the rest of the scene still applies.
+
+## D21 — An invalid scene document does not replace the live one
+
+`scenes.set` validates before it writes. A document that parses but is invalid
+(a rule pointing at a scene that does not exist, two rules both marked default,
+an empty `exe`) is rejected with `invalid_value`, and the in-memory document is
+left untouched.
+
+On load, an invalid or unparsable file is quarantined next to the original as
+`scenes.json.corrupt-<timestamp>` and the engine starts empty, rather than
+loading half a document or deleting the user's file.
+
+## D22 — Renegotiating capabilities are applied first
+
+When a scene contains an HDR, input-source or picture-mode item, those items are
+stably sorted to the front of the apply order. A renegotiation can make the
+device re-enumerate or briefly drop its handle; doing it after brightness writes
+would mean the writes were sent to a device that is about to change mode. The
+report keeps one line per item regardless of order.
+
+## D23 — The foreground watcher is one per process and owns a thread
+
+`ForegroundWatcher::spawn` installs `SetWinEventHook(EVENT_SYSTEM_FOREGROUND,
+…, WINEVENT_OUTOFCONTEXT)` and runs a message pump on a thread it owns. Two
+guards follow from that: a second watcher in the same process is refused
+(`AlreadyExists`), because Win32 events are delivered per thread and the second
+pump would silently receive nothing; and `Drop` unhooks, kills the fallback
+timer, posts `WM_QUIT`, and joins, so a scene engine cannot outlive its hook.
+
+If the hook cannot be installed, the same thread falls back to a 2 s `SetTimer`
+poll. That is slower than the hook but still bounds the scene latency, and the
+log records the degradation instead of silently polling.
+
+## D24 — The panel is told *why* a scene is current
+
+`runtime.current_scene` is "the scene in effect", not "the scene the rule
+picked". After a manual Apply those differ: the rule for the front app may say
+`daily` while the user just applied `focus` by hand. Labelling that line
+"Auto: … → Focus" would be a small lie that is hard to debug from the UI.
+
+The engine therefore records an `AppliedBy` (`startup`, `rule`, `manual`) and
+exposes it as `runtime.last_source`; the panel prints "Auto: <exe> → <scene>"
+only for `rule`, and "Applied manually: <scene>" otherwise. The distinction is
+also what the scene tests assert, so it cannot rot into a UI-only convention.

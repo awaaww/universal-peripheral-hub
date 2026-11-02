@@ -73,3 +73,64 @@ export interface HubFailure {
   kind?: string | null;
   retryable: boolean;
 }
+
+/// One change a scene asks for, addressed by stable `cap_type` (not by an
+/// adapter-local capability id), so a scene survives a device being replaced.
+export interface SceneItem {
+  cap_type: string;
+  device?: string | null;
+  value: CapabilityValue;
+}
+
+export interface Scene {
+  name: string;
+  items: SceneItem[];
+}
+
+export interface SceneRule {
+  exe?: string | null;
+  default?: boolean;
+  scene: string;
+  priority?: number;
+}
+
+export interface SceneOptions {
+  allow_side_effects?: boolean;
+  startup_apply?: boolean;
+}
+
+/// The whole `scenes.json`, mirrored from `hub-core`.
+export interface ScenesFile {
+  version: 1;
+  scenes: Record<string, Scene>;
+  rules: SceneRule[];
+  options: SceneOptions;
+}
+
+export interface ApplyReport {
+  scene: string;
+  written: number;
+  unchanged: number;
+  skipped: number;
+  failed?: string[] | null;
+  missing?: string[] | null;
+}
+
+export interface SceneRuntime {
+  armed: boolean;
+  current_scene?: string | null;
+  current_exe?: string | null;
+  last_applied_ms?: number | null;
+  last_report?: ApplyReport | null;
+  /** `startup` (baseline), `rule` (foreground change) or `manual` (Apply). */
+  last_source?: "startup" | "rule" | "manual" | null;
+}
+
+export interface ScenesResult {
+  document: ScenesFile;
+  runtime: SceneRuntime;
+}
+
+/// `map` re-evaluates the current foreground executable (rules/options changed);
+/// `save` only persists the document (value edits).
+export type SceneMode = "map" | "save";

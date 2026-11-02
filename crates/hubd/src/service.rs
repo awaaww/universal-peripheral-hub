@@ -1,25 +1,67 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+use hub_core::device::DeviceDescriptor;
+use hub_core::scene::ScenesFile;
 use hub_core::{CapabilityValue, Hub, HubError, Result, Settings, SettingsStore, WriteOutcome};
-use hub_proto::{DevicesResult, HelloResult, ReadResult, SetBlockedParams, PROTOCOL_VERSION};
+use hub_proto::{
+    ApplySceneParams, DevicesResult, HelloResult, ReadResult, SceneMode, SceneRuntime,
+    ScenesResult, SetBlockedParams, SetScenesParams, PROTOCOL_VERSION,
+};
 use tokio::sync::broadcast;
+
+use crate::engine::{AppliedBy, DeviceIo, DocumentMode, SceneEngine};
 
 /// Events pushed to connected clients. `hubd` is the single owner of device
 /// state; clients never poll for changes.
 #[derive(Debug, Clone)]
 pub enum Event {
     DevicesChanged(DevicesResult),
+    ScenesChanged(ScenesResult),
 }
 
 pub struct Service {
-    hub: Mutex<Hub>,
+    hub: Arc<Mutex<Hub>>,
     settings: Mutex<SettingsStore>,
+    scenes: Mutex<SceneEngine<HubIo>>,
+    scenes_path: PathBuf,
     events: broadcast::Sender<Event>,
     started: Instant,
     ui: Option<PathBuf>,
+}
+
+/// Hub access for the scene engine. Each call takes the lock only for the
+/// duration of one device operation, so a slow monitor does not block the
+/// snapshot the panel is rendering.
+struct HubIo {
+    hub: Arc<Mutex<Hub>>,
+}
+
+impl DeviceIo for HubIo {
+    fn devices(&self) -> Vec<DeviceDescriptor> {
+        self.hub.lock().expect("hub mutex poisoned").devices()
+    }
+
+    fn read(&self, device: &str, capability: &str) -> Result<CapabilityValue> {
+        self.hub
+            .lock()
+            .expect("hub mutex poisoned")
+            .read(device, capability)
+    }
+
+    fn write(
+        &self,
+        device: &str,
+        capability: &str,
+        value: &CapabilityValue,
+    ) -> Result<WriteOutcome> {
+        self.hub
+            .lock()
+            .expect("hub mutex poisoned")
+            .write(device, capability, value)
+    }
 }
 
 /// Which built-in adapters to register.
@@ -50,6 +92,7 @@ impl Service {
         ui: Option<PathBuf>,
         options: ServiceOptions,
     ) -> Arc<Self> {
+        let scenes_path = scenes_path_for(&settings_path);
         let store = SettingsStore::load(settings_path);
         if let Some(quarantined) = store.quarantined() {
             tracing::warn!(
@@ -93,9 +136,36 @@ impl Service {
         }
 
         let (events, _) = broadcast::channel(32);
+        let hub = Arc::new(Mutex::new(hub));
+        let (document, quarantined) = load_scenes(&scenes_path);
+        if let Some(path) = quarantined {
+            tracing::warn!(
+                path = %path.display(),
+                "scenes file was unreadable and has been preserved"
+            );
+        }
+        let engine = SceneEngine::new(
+            HubIo {
+                hub: Arc::clone(&hub),
+            },
+            document,
+        )
+        .unwrap_or_else(|error| {
+            tracing::warn!(%error, "scenes file rejected; starting without scenes");
+            SceneEngine::new(
+                HubIo {
+                    hub: Arc::clone(&hub),
+                },
+                ScenesFile::empty(),
+            )
+            .expect("an empty document is always valid")
+        });
+
         Arc::new(Self {
-            hub: Mutex::new(hub),
+            hub,
             settings: Mutex::new(store),
+            scenes: Mutex::new(engine),
+            scenes_path,
             events,
             started: Instant::now(),
             ui,
@@ -226,6 +296,79 @@ impl Service {
         self.events.subscribe()
     }
 
+    /// The scene document plus the engine's runtime view, for the panel.
+    pub fn scenes(&self) -> ScenesResult {
+        let engine = self.scenes.lock().expect("scenes mutex poisoned");
+        scenes_result(&engine)
+    }
+
+    /// Persist a new document and, for `map` mode, recompute against the
+    /// executable the user is in right now. Persisting happens before the
+    /// in-memory swap: a failed save must not leave the running engine on a
+    /// document that will disappear at the next restart.
+    pub fn set_scenes(&self, params: &SetScenesParams) -> Result<ScenesResult> {
+        params.document.validate()?;
+        save_scenes(&self.scenes_path, &params.document)?;
+        let mode = match params.mode {
+            SceneMode::Map => DocumentMode::Map,
+            SceneMode::Save => DocumentMode::Save,
+        };
+        let result = {
+            let mut engine = self.scenes.lock().expect("scenes mutex poisoned");
+            if let Some(report) = engine.set_document(params.document.clone(), mode)? {
+                tracing::info!(
+                    scene = %report.scene,
+                    written = report.written,
+                    unchanged = report.unchanged,
+                    skipped = report.skipped,
+                    failed = report.failed.len(),
+                    "scene re-applied after a document change"
+                );
+            }
+            scenes_result(&engine)
+        };
+        self.broadcast(Event::ScenesChanged(result.clone()));
+        Ok(result)
+    }
+
+    /// Apply a scene because the user pressed a button in the panel.
+    pub fn apply_scene(&self, params: &ApplySceneParams) -> Result<ScenesResult> {
+        let result = {
+            let mut engine = self.scenes.lock().expect("scenes mutex poisoned");
+            let report = engine.apply_now(&params.scene)?;
+            tracing::info!(
+                scene = %report.scene,
+                written = report.written,
+                unchanged = report.unchanged,
+                skipped = report.skipped,
+                failed = report.failed.len(),
+                missing = report.missing.len(),
+                "scene applied on request"
+            );
+            scenes_result(&engine)
+        };
+        self.broadcast(Event::ScenesChanged(result.clone()));
+        Ok(result)
+    }
+
+    /// Called from the foreground watcher thread. Does nothing when the
+    /// executable did not change, so a chatty window switcher costs one lock.
+    pub fn on_foreground(&self, exe: &str) {
+        let (result, changed) = {
+            let mut engine = self.scenes.lock().expect("scenes mutex poisoned");
+            let before = engine.runtime();
+            let applied = engine.on_foreground(exe).is_some();
+            let after = engine.runtime();
+            let changed = applied
+                || before.current_scene != after.current_scene
+                || before.armed != after.armed;
+            (scenes_result(&engine), changed)
+        };
+        if changed {
+            self.broadcast(Event::ScenesChanged(result));
+        }
+    }
+
     fn broadcast(&self, event: Event) {
         // A missing receiver only means no UI is connected.
         let _ = self.events.send(event);
@@ -253,6 +396,97 @@ impl Service {
     pub fn ui_path(&self) -> Option<&std::path::Path> {
         self.ui.as_deref()
     }
+}
+
+fn scenes_result(engine: &SceneEngine<HubIo>) -> ScenesResult {
+    let runtime = engine.runtime();
+    ScenesResult {
+        document: engine.document().clone(),
+        runtime: SceneRuntime {
+            armed: runtime.armed,
+            current_scene: runtime.current_scene,
+            current_exe: runtime.current_exe,
+            last_applied_ms: runtime.last_applied_ms,
+            last_report: runtime.last_report,
+            last_source: runtime.applied_by.map(|by| match by {
+                AppliedBy::Startup => "startup".to_string(),
+                AppliedBy::Rule => "rule".to_string(),
+                AppliedBy::Manual => "manual".to_string(),
+            }),
+        },
+    }
+}
+
+fn scenes_path_for(settings_path: &Path) -> PathBuf {
+    settings_path.with_file_name("scenes.json")
+}
+
+/// Read `scenes.json`, keeping an unreadable file instead of overwriting it.
+///
+/// A hand-edited file with a typo must be recoverable: the panel would happily
+/// save an empty document over it and the user would lose their rules.
+fn load_scenes(path: &Path) -> (ScenesFile, Option<PathBuf>) {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return (ScenesFile::empty(), None)
+        }
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "cannot read scenes file");
+            return (ScenesFile::empty(), None);
+        }
+    };
+    let parsed = serde_json::from_str::<ScenesFile>(&text)
+        .map_err(HubError::from)
+        .and_then(|document| document.validate().map(|()| document));
+    match parsed {
+        Ok(document) => (document, None),
+        Err(error) => {
+            tracing::warn!(path = %path.display(), %error, "scenes file rejected");
+            let quarantined = quarantine(path);
+            (ScenesFile::empty(), quarantined)
+        }
+    }
+}
+
+fn save_scenes(path: &Path, document: &ScenesFile) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut text = serde_json::to_string_pretty(document)?;
+    text.push('\n');
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text)?;
+    std::fs::rename(&temporary, path)?;
+    Ok(())
+}
+
+/// Move a rejected file aside. Never delete: it is the only copy of the user's
+/// rules, and a parser bug must not destroy data.
+fn quarantine(path: &Path) -> Option<PathBuf> {
+    let epoch = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or(0);
+    for attempt in 0..10 {
+        let suffix = if attempt == 0 {
+            format!(".corrupt-{epoch}")
+        } else {
+            format!(".corrupt-{epoch}-{attempt}")
+        };
+        let candidate = PathBuf::from(format!("{}{suffix}", path.display()));
+        if candidate.exists() {
+            continue;
+        }
+        return match std::fs::rename(path, &candidate) {
+            Ok(()) => Some(candidate),
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "cannot quarantine scenes file");
+                None
+            }
+        };
+    }
+    None
 }
 
 /// The snapshot every client sees: live device state plus the user's block
@@ -313,4 +547,85 @@ pub fn write_was_applied(outcome: &WriteOutcome) -> std::result::Result<(), HubE
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("uph-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[test]
+    fn corrupt_scenes_are_quarantined_not_lost() {
+        let dir = scratch("scenes-corrupt");
+        let path = dir.join("scenes.json");
+        std::fs::write(&path, "{ this is not json").unwrap();
+
+        let (document, quarantined) = load_scenes(&path);
+        assert!(document.scenes.is_empty(), "fall back to an empty document");
+        let quarantined = quarantined.expect("the unreadable file is preserved");
+        assert_eq!(
+            std::fs::read_to_string(&quarantined).unwrap(),
+            "{ this is not json"
+        );
+        assert!(!path.exists(), "the broken file must not be overwritten");
+    }
+
+    #[test]
+    fn semantically_invalid_scenes_are_quarantined_too() {
+        let dir = scratch("scenes-invalid");
+        let path = dir.join("scenes.json");
+        std::fs::write(
+            &path,
+            r#"{"version":1,"scenes":{},"rules":[{"default":true,"scene":"ghost"}]}"#,
+        )
+        .unwrap();
+
+        let (document, quarantined) = load_scenes(&path);
+        assert!(document.scenes.is_empty());
+        assert!(quarantined.is_some(), "a rule pointing nowhere is rejected");
+    }
+
+    #[test]
+    fn scenes_survive_a_save_load_round_trip() {
+        let dir = scratch("scenes-roundtrip");
+        let path = dir.join("scenes.json");
+        let mut document = ScenesFile::empty();
+        document.scenes.insert(
+            "work".to_string(),
+            hub_core::Scene {
+                name: "Work".to_string(),
+                items: vec![hub_core::SceneItem {
+                    cap_type: "display.brightness".to_string(),
+                    device: None,
+                    value: CapabilityValue::Int(30),
+                }],
+            },
+        );
+        document.rules.push(hub_core::SceneRule {
+            exe: None,
+            default: true,
+            scene: "work".to_string(),
+            priority: 0,
+        });
+
+        save_scenes(&path, &document).expect("save");
+        let (loaded, quarantined) = load_scenes(&path);
+        assert!(quarantined.is_none());
+        assert_eq!(loaded, document);
+    }
+
+    #[test]
+    fn a_missing_scenes_file_is_not_an_error() {
+        let dir = scratch("scenes-missing");
+        let (document, quarantined) = load_scenes(&dir.join("scenes.json"));
+        assert!(document.scenes.is_empty());
+        assert!(quarantined.is_none());
+        assert_eq!(document.version, hub_core::SCENES_VERSION);
+    }
 }

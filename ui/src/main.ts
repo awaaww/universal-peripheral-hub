@@ -10,6 +10,7 @@ import type {
   CapabilityValue,
   DeviceDescriptor,
   HubFailure,
+  ScenesResult,
   Snapshot,
   WriteOutcome,
 } from "./protocol";
@@ -26,6 +27,10 @@ const state: UiState = {
   error: null,
   loading: true,
   blockedOpen: new Set(),
+  scenes: null,
+  scenesError: null,
+  scenesUnsupported: false,
+  scenesBusy: false,
 };
 
 function call<T>(method: string, params: unknown): Promise<T> {
@@ -61,6 +66,9 @@ function applySnapshot(snapshot: Snapshot): void {
 async function refresh(): Promise<void> {
   state.loading = true;
   paint();
+  // The scenes section is independent of the device snapshot; start its read
+  // alongside `devices.list` so it does not wait behind every capability read.
+  void loadScenes();
   try {
     const snapshot = await call<Snapshot>("devices.list", null);
     applySnapshot(snapshot);
@@ -92,6 +100,94 @@ async function loadValues(devices: DeviceDescriptor[]): Promise<void> {
       }
       paint();
     }
+  }
+}
+
+/**
+ * `RpcError::method_not_found` carries no `data`, so the Tauri bridge reports
+ * it with `kind: null` and only this text. That is the one failure that should
+ * hide the scenes section instead of showing the error banner.
+ */
+function isUnknownScenesMethod(failure: HubFailure): boolean {
+  const kind = failure.kind ?? "";
+  return (
+    (kind === "" || kind === "method_not_found") &&
+    /not implemented by this hub|method not found/i.test(failure.message)
+  );
+}
+
+async function loadScenes(): Promise<void> {
+  try {
+    const result = await call<ScenesResult>("scenes.get", null);
+    state.scenes = result;
+    state.scenesUnsupported = false;
+    state.scenesError = null;
+  } catch (err) {
+    const failure = describe(err);
+    if (isUnknownScenesMethod(failure)) {
+      state.scenes = null;
+      state.scenesUnsupported = true;
+    } else {
+      state.scenesError = failure.message;
+    }
+  }
+  paint();
+}
+
+/**
+ * Persist one engine option. `allow_side_effects` changes what the next rule
+ * evaluation may do, so it is sent as `map`; `startup_apply` is only a stored
+ * preference, so it is a plain `save`.
+ */
+async function setSceneOption(
+  option: "allow_side_effects" | "startup_apply",
+  checked: boolean,
+): Promise<void> {
+  const current = state.scenes;
+  if (!current || state.scenesBusy) return;
+
+  const options = {
+    ...current.document.options,
+    allow_side_effects:
+      option === "allow_side_effects" ? checked : Boolean(current.document.options.allow_side_effects),
+    startup_apply:
+      option === "startup_apply" ? checked : Boolean(current.document.options.startup_apply),
+  };
+  const document = { ...current.document, options };
+
+  // Optimistic: the checkbox stays where the user put it while the document is
+  // written. On failure it snaps back and the banner explains why.
+  state.scenes = { ...current, document };
+  state.scenesBusy = true;
+  paint();
+  try {
+    const result = await call<ScenesResult>("scenes.set", {
+      document,
+      mode: option === "allow_side_effects" ? "map" : "save",
+    });
+    state.scenes = result;
+    state.scenesError = null;
+  } catch (err) {
+    state.scenes = current;
+    state.scenesError = describe(err).message;
+  } finally {
+    state.scenesBusy = false;
+    paint();
+  }
+}
+
+async function applyScene(sceneId: string): Promise<void> {
+  if (!state.scenes || state.scenesBusy) return;
+  state.scenesBusy = true;
+  paint();
+  try {
+    state.scenes = await call<ScenesResult>("scene.apply", { scene: sceneId });
+    state.scenesError = null;
+  } catch (err) {
+    state.scenesError = describe(err).message;
+  } finally {
+    state.scenesBusy = false;
+    paint();
   }
 }
 
@@ -293,6 +389,8 @@ const actions: Actions = {
   ignoreDevice: (device) => void ignoreDevice(device),
   restoreDevice: (adapter, token) => void restoreDevice(adapter, token),
   toggleBlockedList: (adapterId) => toggleBlockedList(adapterId),
+  applyScene: (sceneId) => void applyScene(sceneId),
+  setSceneOption: (option, checked) => void setSceneOption(option, checked),
 };
 
 function paint(): void {
@@ -306,6 +404,14 @@ void listen<Snapshot>("hub://devices-changed", (event) => {
 }).catch((err) => {
   // Losing the push channel is not fatal: every action still talks to hubd.
   console.error("cannot subscribe to device changes", err);
+});
+
+void listen<ScenesResult>("hub://scenes-changed", (event) => {
+  // Same payload as scenes.get/scenes.set: document plus engine runtime.
+  state.scenes = event.payload;
+  paint();
+}).catch((err) => {
+  console.error("cannot subscribe to scene changes", err);
 });
 
 window.addEventListener("unhandledrejection", (event) => {

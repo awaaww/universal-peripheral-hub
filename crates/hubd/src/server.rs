@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use hub_proto::{devices_changed_notification, Request, Response, MAX_LINE_BYTES};
+use hub_proto::{
+    devices_changed_notification, scenes_changed_notification, Request, Response, MAX_LINE_BYTES,
+};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, BufWriter};
 use tokio::net::windows::named_pipe::{NamedPipeServer, ServerOptions};
 use tokio::sync::{broadcast, watch};
@@ -76,6 +78,9 @@ async fn handle_client(pipe: NamedPipeServer, service: Arc<Service>) -> std::io:
                 match event {
                     Ok(Event::DevicesChanged(result)) => {
                         write_json(&mut writer, &devices_changed_notification(&result)).await?;
+                    }
+                    Ok(Event::ScenesChanged(result)) => {
+                        write_json(&mut writer, &scenes_changed_notification(&result)).await?;
                     }
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         tracing::warn!(skipped, "client is too slow; dropped events");

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use hub_proto::{
-    codes, method, ReadParams, Request, Response, RpcError, SetBlockedParams, SetEnabledParams,
-    WriteParams,
+    codes, method, ApplySceneParams, ReadParams, Request, Response, RpcError, SetBlockedParams,
+    SetEnabledParams, SetScenesParams, WriteParams,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -68,6 +68,23 @@ pub async fn dispatch(service: Arc<Service>, request: Request) -> Option<Respons
         method::DEVICE_SET_BLOCKED => match parse::<SetBlockedParams>(params) {
             Ok(params) => match blocking(service, move |svc| svc.set_device_blocked(&params)).await
             {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        // Reading the document is cheap (no device I/O), so it stays on the
+        // async side; writing it touches the disk and possibly a monitor.
+        method::SCENES_GET => success(id, &service.scenes()),
+        method::SCENES_SET => match parse::<SetScenesParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.set_scenes(&params)).await {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        method::SCENE_APPLY => match parse::<ApplySceneParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.apply_scene(&params)).await {
                 Ok(result) => success(id, &result),
                 Err(err) => Response::failure(id, err),
             },

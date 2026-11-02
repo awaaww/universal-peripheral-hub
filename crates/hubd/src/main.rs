@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use hub_core::default_config_dir;
-use hubd::{server, single, tray, ui, Service};
+use hubd::{foreground, foreground::ForegroundWatcher, server, single, tray, ui, Service};
 use tokio::runtime::Runtime;
 
 /// Per-session mutex: two interactive sessions may each run a hub, but one
@@ -65,6 +65,30 @@ fn serve(_guard: single::InstanceGuard) -> ExitCode {
         None => tracing::warn!("UI executable not found; the tray can still control adapters"),
     }
     let service = Service::bootstrap(config_dir.join("settings.json"), ui_path);
+
+    // Foreground tracking feeds the scene engine. The watcher is optional: a
+    // denied hook (locked-down desktop, unusual session) degrades to polling
+    // inside the module, and a total failure only means scenes stop switching
+    // on their own — the rest of the hub keeps working.
+    let _watcher = {
+        let watcher_service = Arc::clone(&service);
+        match ForegroundWatcher::spawn(move |exe| watcher_service.on_foreground(exe)) {
+            Ok(watcher) => {
+                // The hook only reports changes. Without this the first app
+                // switch would be mistaken for the startup baseline and the
+                // scene for it would never be applied.
+                match foreground::current_executable() {
+                    Some(exe) => service.on_foreground(&exe),
+                    None => tracing::warn!("no foreground window yet; baseline deferred"),
+                }
+                Some(watcher)
+            }
+            Err(err) => {
+                tracing::warn!(%err, "foreground tracking unavailable; scenes will not switch");
+                None
+            }
+        }
+    };
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
     match tray::spawn(Arc::clone(&service), shutdown_tx) {

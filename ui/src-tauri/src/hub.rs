@@ -358,11 +358,20 @@ where
 }
 
 fn forward_notice(value: &Value) {
-    if value.get("method").and_then(Value::as_str) == Some(hub_proto::method::DEVICES_CHANGED) {
-        let payload = value.get("params").cloned().unwrap_or(Value::Null);
-        if let Some(app) = APP.get() {
-            let _ = app.emit("hub://devices-changed", payload);
-        }
+    // Notifications are pushed while no request is pending; they must reach the
+    // window as-is, otherwise the panel only refreshes when it happens to ask
+    // something else (a stale list that looks like a broken button).
+    let Some(method) = value.get("method").and_then(Value::as_str) else {
+        return;
+    };
+    let event = match method {
+        hub_proto::method::DEVICES_CHANGED => "hub://devices-changed",
+        hub_proto::method::SCENES_CHANGED => "hub://scenes-changed",
+        _ => return,
+    };
+    let payload = value.get("params").cloned().unwrap_or(Value::Null);
+    if let Some(app) = APP.get() {
+        let _ = app.emit(event, payload);
     }
 }
 

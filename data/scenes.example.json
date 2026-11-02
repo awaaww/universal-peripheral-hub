@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "scenes": {
+    "daily": {
+      "name": "Daily",
+      "items": [
+        { "cap_type": "display.brightness", "value": { "type": "int", "value": 60 } },
+        { "cap_type": "display.contrast", "value": { "type": "int", "value": 50 } }
+      ]
+    },
+    "focus": {
+      "name": "Focus",
+      "items": [
+        { "cap_type": "display.brightness", "value": { "type": "int", "value": 35 } }
+      ]
+    },
+    "movie": {
+      "name": "Movie",
+      "items": [
+        { "cap_type": "display.brightness", "value": { "type": "int", "value": 20 } },
+        { "cap_type": "display.contrast", "value": { "type": "int", "value": 65 } }
+      ]
+    }
+  },
+  "rules": [
+    { "exe": "notepad.exe", "scene": "focus", "priority": 10 },
+    { "exe": "vlc.exe", "scene": "movie", "priority": 10 },
+    { "default": true, "scene": "daily" }
+  ],
+  "options": {
+    "allow_side_effects": false,
+    "startup_apply": false
+  }
+}

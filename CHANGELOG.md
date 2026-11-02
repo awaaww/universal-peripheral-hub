@@ -13,11 +13,22 @@ All notable changes to this project are documented here. The format follows
   is persisted per adapter and applied before the first request.
 - Monitors are ordered left-to-right, top-to-bottom by their desktop geometry,
   so card order no longer follows the undocumented `EnumDisplayMonitors` order.
+- Scene engine (M2): `scenes.json` holds named scenes, foreground rules and
+  options; `scenes.get`, `scenes.set` and `scene.apply` expose it, and
+  `scenes.changed` pushes updates to the panel.
+- Foreground tracking uses `SetWinEventHook(EVENT_SYSTEM_FOREGROUND)` with a 2 s
+  timer fallback, so scene switching does not poll the process list.
+- Apply reports (`written` / `unchanged` / `skipped` / `failed` / `missing`) are
+  returned to callers and shown in the panel.
+- `data/scenes.example.json`, and a scenes section in `docs/architecture.md`.
 
 ### Fixed
 
 - Dragging a slider while a write was in flight silently dropped the new value;
   writes are now queued per device and coalesced to the newest value.
+- The startup baseline is taken from the foreground at launch instead of being
+  consumed by the first app switch, so the rule for the app already in front
+  runs when the user comes back to it.
 
 ## 0.2.0 — M1 DDC/CI
 

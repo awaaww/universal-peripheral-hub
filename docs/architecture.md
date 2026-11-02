@@ -82,6 +82,53 @@ The rules that follow from this, and that scene code must respect:
 3. **Renegotiation is opt-in.** Capabilities with `signal_renegotiation` are
    never applied implicitly; the user enables them per scene.
 
+## Scenes
+
+A scene is a named set of capability values; a rule maps a foreground executable
+to a scene. Both live in one JSON document (`%APPDATA%\UniversalPeripheralHub\scenes.json`):
+
+```json
+{
+  "version": 1,
+  "scenes": { "focus": { "name": "Focus", "items": [
+    { "cap_type": "display.brightness", "value": { "type": "int", "value": 25 } } ] } },
+  "rules": [ { "exe": "notepad.exe", "scene": "focus", "priority": 10 },
+             { "default": true, "scene": "daily" } ],
+  "options": { "allow_side_effects": false, "startup_apply": false }
+}
+```
+
+Items address capabilities by `cap_type`, so one scene works on any display that
+has `display.brightness`; an optional `device` pins an item to one device. A
+scene is expanded at apply time against whatever devices are currently present,
+and capabilities no device provides are reported as `missing` instead of failing
+the whole scene.
+
+The engine is told about foreground changes by a `SetWinEventHook` watcher
+(`EVENT_SYSTEM_FOREGROUND`), not by polling the process list; if the hook cannot
+be installed it falls back to a 2 s timer, and the log says so.
+
+Applying a scene:
+
+1. **Startup records a baseline and writes nothing.** `hubd` records the
+   foreground it started under; that scene is not applied unless `startup_apply`
+   is set.
+2. **Read before write.** A value the device already reports is skipped and
+   counted as `unchanged` rather than `written`.
+3. **Renegotiation is opt-in.** Items whose capability has a non-empty
+   `cost.side_effects` (HDR, input source, picture mode) are applied first when
+   allowed, and reported as `skipped` when `allow_side_effects` is false.
+4. **Failures do not abort the scene.** Each failure is collected, retryable
+   ones are retried once, and the rest of the scene still runs.
+
+Every apply returns an `ApplyReport` (`written`, `unchanged`, `skipped`,
+`failed`, `missing`), which is what the panel shows; "nothing happened" is
+visible, not silent.
+
+Re-entering the same executable is a no-op, but re-entering the same *scene*
+from a different executable is not: values may have been changed by hand while
+the other app was in front, so the read-before-write check runs every time.
+
 ## Pipe protocol
 
 Line-delimited JSON-RPC 2.0 over a per-user named pipe:
@@ -91,8 +138,9 @@ Line-delimited JSON-RPC 2.0 over a per-user named pipe:
 ```
 
 Methods: `hub.hello`, `devices.list`, `capability.read`, `capability.write`,
-`adapter.set_enabled`. Notifications: `hub.activate` (client → hub, "show the
-panel") and `devices.changed` (hub → client push). `error.code` is always an
+`adapter.set_enabled`, `device.set_blocked`, `scenes.get`, `scenes.set`,
+`scene.apply`. Notifications: `hub.activate` (client → hub, "show the panel"),
+and the pushes `devices.changed` and `scenes.changed` (hub → client). `error.code` is always an
 integer, as the spec requires; the machine-readable class is in
 `error.data.kind` and `error.data.retryable`.
 
@@ -109,10 +157,12 @@ reading until the client hangs up or sends a line over 1 MiB.
   pipe for other clients.
 - A missing UI is not an error: `hubd` starts without it, and the tray can
   enable/disable adapters.
-- Settings are written atomically (`.tmp` + rename). An unparsable
-  `settings.json` is preserved as `settings.json.corrupt-<timestamp>` and the
+- Settings and scenes are written atomically (`.tmp` + rename). An unparsable
+  `settings.json` or `scenes.json` is preserved as `.corrupt-<timestamp>` and the
   defaults are used, because losing a user's configuration silently is worse
-  than leaving one stray file behind.
+  than leaving one stray file behind. A scene document that parses but does not
+  validate (for example a rule pointing at a scene that does not exist) is
+  quarantined the same way, and the previous in-memory document stays active.
 
 ## Repository map
 

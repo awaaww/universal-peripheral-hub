@@ -6,7 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use hub_core::{AdapterState, CapabilityValue, DeviceDescriptor, HubError, WriteOutcome};
+use hub_core::{
+    AdapterState, ApplyReport, CapabilityValue, DeviceDescriptor, HubError, ScenesFile,
+    WriteOutcome,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -54,11 +57,20 @@ pub mod method {
     /// Stop (or resume) talking to one device. The persisted token is
     /// adapter-specific and opaque to the client.
     pub const DEVICE_SET_BLOCKED: &str = "device.set_blocked";
+    /// Read the scene document together with what the engine is doing.
+    pub const SCENES_GET: &str = "scenes.get";
+    /// Replace the whole document. `mode` decides whether the change is
+    /// recomputed against the current foreground executable right away.
+    pub const SCENES_SET: &str = "scenes.set";
+    /// Apply one scene because the user asked for it.
+    pub const SCENE_APPLY: &str = "scene.apply";
     /// Notification sent by a second `hubd` instance (or by a shortcut) asking
     /// the running instance to show the panel.
     pub const ACTIVATE: &str = "hub.activate";
     /// Server push: the visible device set changed.
     pub const DEVICES_CHANGED: &str = "devices.changed";
+    /// Server push: the scene document or the runtime state changed.
+    pub const SCENES_CHANGED: &str = "scenes.changed";
 }
 
 pub mod codes {
@@ -275,6 +287,63 @@ pub struct ReadResult {
 }
 
 pub type CapabilityWriteResult = WriteOutcome;
+
+/// What the panel needs to render the scenes section: the document it may
+/// edit, plus a read-only view of what the engine last did.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ScenesResult {
+    pub document: ScenesFile,
+    pub runtime: SceneRuntime,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SceneRuntime {
+    /// False until the first foreground event established a baseline. Nothing
+    /// is written before that, by design.
+    pub armed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_scene: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_exe: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_applied_ms: Option<u64>,
+    /// The last apply, including what it skipped or failed to write.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_report: Option<ApplyReport>,
+    /// `startup` (baseline only), `rule` or `manual`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_source: Option<String>,
+}
+
+/// `map` re-evaluates the current foreground executable (use it when rules
+/// changed); `save` only persists the document (use it while editing values).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneMode {
+    Map,
+    Save,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetScenesParams {
+    pub document: ScenesFile,
+    pub mode: SceneMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApplySceneParams {
+    pub scene: String,
+}
+
+/// Notification payload for `scenes.changed`.
+pub type ScenesChanged = ScenesResult;
+
+pub fn scenes_changed_notification(result: &ScenesResult) -> Request {
+    Request::notification(
+        method::SCENES_CHANGED,
+        serde_json::to_value(result).unwrap_or(Value::Null),
+    )
+}
 
 /// Notification payload for `devices.changed`.
 pub type DevicesChanged = DevicesResult;

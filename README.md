@@ -8,12 +8,14 @@ described by adapters as a set of typed **capabilities** (brightness, polling
 rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
-> **Status: M1 (DDC/CI).** The application shell, the adapter host, the RPC
-> transport, the descriptor-driven UI and a real DDC/CI adapter are implemented.
-> Brightness, contrast and input source are read and written on real hardware
-> (verified on a KTC H27T22S); HDR is exposed only when the monitor advertises
-> VCP `0xE9`. HID/audio adapters, the scene engine, auto-start and installers are
-> **not implemented yet** — see the roadmap.
+> **Status: M2 (scenes).** The application shell, the adapter host, the RPC
+> transport, the descriptor-driven UI, a real DDC/CI adapter and the scene engine
+> are implemented. Brightness, contrast and input source are read and written on
+> real hardware (verified on a KTC H27T22S); HDR is exposed only when the monitor
+> advertises VCP `0xE9`. Scenes switch on the foreground executable, read before
+> writing, and skip renegotiating capabilities unless you opt in. HID/audio
+> adapters, auto-start and installers are **not implemented yet** — see the
+> roadmap.
 
 ## Status / roadmap
 
@@ -21,7 +23,7 @@ descriptors rather than hard-coded per vendor.
 | --- | --- | --- |
 | M0 | Tauri shell, `hubd`, adapter host, mock adapter, RPC, CI | **done** |
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
-| M2 | Scene engine (foreground trigger, read-before-write) | not implemented |
+| M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
 | M3 | First HID adapter (keyboard/mouse) | not implemented |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
 | M5 | Session recording / replay | not implemented |
@@ -50,6 +52,7 @@ ui/                 Vite + TypeScript frontend
 ui/src-tauri        Tauri 2 shell (window only; no tray, no device logic)
 docs/               architecture, decisions, adapter protocol
 data/monitors/      per-EDID monitor overrides (SKG2725.json = KTC H27T22S)
+data/scenes.example.json  documented example scene document
 ```
 
 ## Build and run
