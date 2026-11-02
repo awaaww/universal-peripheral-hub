@@ -10,6 +10,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Lines};
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 use tokio::sync::watch;
 
+use hubd::service::ServiceOptions;
 use hubd::{server::serve, Service};
 
 const TIMEOUT: Duration = Duration::from_secs(5);
@@ -41,7 +42,11 @@ async fn pipe_round_trip_and_device_push() -> anyhow::Result<()> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir)?;
 
-    let service = Service::bootstrap(dir.join("settings.json"), None);
+    let service = Service::bootstrap_with(
+        dir.join("settings.json"),
+        None,
+        ServiceOptions { ddc: false },
+    );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let server_pipe = pipe.clone();
     let server = tokio::spawn(async move { serve(&server_pipe, service, shutdown_rx).await });

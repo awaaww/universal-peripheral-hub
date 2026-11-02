@@ -79,3 +79,27 @@ Do not copy definitions from other projects without checking them: Exo's files
 are a useful cross-reference, but they use `//` comments, Exo resource GUIDs for
 labels, and a different `ignoredCapabilitiesVcpCodes` semantic. We keep our own
 format and our own labels.
+
+## Blocking a monitor
+
+A monitor behind a one-way HDMI splitter, a KVM or a flaky adapter can make each
+DDC request wait for seconds. Because the GPU's I2C bus is shared, that stalls
+every other monitor too. Add its EDID key to `ddc_blocked` in
+`%APPDATA%\UniversalPeripheralHub\settings.json`:
+
+```json
+{
+  "schema_version": 1,
+  "disabled_adapters": [],
+  "ddc_blocked": ["SKG2725"]
+}
+```
+
+Blocked monitors are skipped during enumeration and never receive a request.
+There is no UI for this yet.
+
+## Shipped files
+
+`SKG2725.json` describes a KTC H27T22S (MStar scaler, MCCS 2.1): writes need
+~150 ms to latch, the capabilities string has no `model()` atom, and the name
+comes from the EDID `0xFC` descriptor.

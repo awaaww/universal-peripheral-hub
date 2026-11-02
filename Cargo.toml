@@ -5,6 +5,7 @@ members = [
     "crates/hub-proto",
     "crates/hubd",
     "adapters/mock",
+    "adapters/ddc",
     "ui/src-tauri",
 ]
 # The UI shell needs the frontend bundle and the full Tauri toolchain, so it is
@@ -14,6 +15,7 @@ default-members = [
     "crates/hub-proto",
     "crates/hubd",
     "adapters/mock",
+    "adapters/ddc",
 ]
 
 [workspace.package]

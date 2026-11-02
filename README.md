@@ -8,17 +8,19 @@ described by adapters as a set of typed **capabilities** (brightness, polling
 rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
-> **Status: M0 (skeleton).** The application shell, the adapter host, the RPC
-> transport and the descriptor-driven UI are implemented and exercised by the
-> bundled mock adapter. Real DDC/CI, HID and audio adapters, the scene engine,
-> auto-start and installers are **not implemented yet** — see the roadmap.
+> **Status: M1 (DDC/CI).** The application shell, the adapter host, the RPC
+> transport, the descriptor-driven UI and a real DDC/CI adapter are implemented.
+> Brightness, contrast and input source are read and written on real hardware
+> (verified on a KTC H27T22S); HDR is exposed only when the monitor advertises
+> VCP `0xE9`. HID/audio adapters, the scene engine, auto-start and installers are
+> **not implemented yet** — see the roadmap.
 
 ## Status / roadmap
 
 | Milestone | Content | State |
 | --- | --- | --- |
 | M0 | Tauri shell, `hubd`, adapter host, mock adapter, RPC, CI | **done** |
-| M1 | DDC/CI adapter (brightness, contrast, input, HDR) | not implemented |
+| M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | not implemented |
 | M3 | First HID adapter (keyboard/mouse) | not implemented |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
@@ -47,7 +49,7 @@ adapters/mock       in-process mock adapter with two fake devices
 ui/                 Vite + TypeScript frontend
 ui/src-tauri        Tauri 2 shell (window only; no tray, no device logic)
 docs/               architecture, decisions, adapter protocol
-data/monitors/      per-EDID monitor overrides (empty until M1)
+data/monitors/      per-EDID monitor overrides (SKG2725.json = KTC H27T22S)
 ```
 
 ## Build and run
@@ -114,8 +116,9 @@ and replaced with defaults.
 耳机、手柄各自的厂商驱动软件。适配器把设备描述成一组带类型的「能力」（亮度、回报率、
 RGB、HDR 等），界面和场景引擎都从描述符生成，而不是为每个型号写死控件。
 
-当前是 **M0 骨架**：外壳、适配器宿主、RPC 传输、由描述符驱动的界面和模拟适配器可用；
-真实 DDC/CI、HID、音频适配器，场景引擎，开机自启和安装包均**未实现**，状态表见上。
+当前是 **M1**：外壳、适配器宿主、RPC、描述符驱动的界面、模拟适配器，以及真实 DDC/CI
+显示器适配器（亮度/对比度/输入源，HDR 视机型是否上报 VCP `0xE9`）可用。HID、音频适配器、
+场景引擎、开机自启和安装包均**未实现**，状态表见上。
 
 进程边界：`hubd` 拥有托盘、单实例、设置与设备；UI 只是一个窗口，通过按用户命名的
 命名管道用「按行 JSON-RPC 2.0」与 `hubd` 通信，自身不保存设备状态。

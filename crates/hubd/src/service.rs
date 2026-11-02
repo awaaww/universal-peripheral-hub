@@ -21,10 +21,34 @@ pub struct Service {
     ui: Option<PathBuf>,
 }
 
+/// Which built-in adapters to register.
+///
+/// Tests need a hermetic hub, so the DDC adapter — the only one that depends on
+/// the machine it runs on — can be left out.
+#[derive(Debug, Clone, Copy)]
+pub struct ServiceOptions {
+    pub ddc: bool,
+}
+
+impl Default for ServiceOptions {
+    fn default() -> Self {
+        Self { ddc: true }
+    }
+}
+
 impl Service {
-    /// Build the service from the settings file, register the built-in
-    /// adapters, honour the persisted disabled list and load everything else.
+    /// Build the service with every built-in adapter.
     pub fn bootstrap(settings_path: PathBuf, ui: Option<PathBuf>) -> Arc<Self> {
+        Self::bootstrap_with(settings_path, ui, ServiceOptions::default())
+    }
+
+    /// Build the service from the settings file, register the requested
+    /// adapters, honour the persisted disabled list and load everything else.
+    pub fn bootstrap_with(
+        settings_path: PathBuf,
+        ui: Option<PathBuf>,
+        options: ServiceOptions,
+    ) -> Arc<Self> {
         let store = SettingsStore::load(settings_path);
         if let Some(quarantined) = store.quarantined() {
             tracing::warn!(
@@ -37,6 +61,15 @@ impl Service {
         let mut hub = Hub::new();
         hub.register(adapter_mock::adapter_info(), adapter_mock::factory())
             .expect("mock adapter id is a compile-time constant");
+
+        // Real monitors. Enumeration is cheap (the capability string is only
+        // read for monitors that answer); a machine without monitors simply
+        // returns no devices.
+        if options.ddc {
+            if let Err(err) = hub.register(adapter_ddc::adapter_info(), adapter_ddc::factory()) {
+                tracing::warn!(error = %err, "cannot register the DDC adapter");
+            }
+        }
 
         for adapter in &disabled {
             if hub.is_registered(adapter) {

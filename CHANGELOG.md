@@ -6,6 +6,37 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+## 0.2.0 — M1 DDC/CI
+
+### Added
+
+- `adapters/ddc`: real DDC/CI monitor adapter.
+  - Stable device ids from EDID (`ddc:skg2725`), with a hashed device-path
+    fallback marked weak when the EDID blob is unreadable.
+  - Capabilities parsed from the MCCS string: brightness, contrast, input source
+    (values taken from the monitor), and HDR only where VCP `0xE9` is advertised.
+  - Reads retry twice; after that the VCP code is cached as unsupported, so a
+    capability string that lies cannot cost two round trips per refresh.
+  - Writes settle for `settle_ms` (120 ms default, per-model override) before
+    the hub reads back, because the panel latches the value late.
+  - Per-model overrides in `data/monitors/<KEY>.json`; user copies in
+    `%APPDATA%\UniversalPeripheralHub\monitors\`.
+  - `ddc_blocked` in `settings.json` skips a monitor behind a splitter or KVM
+    that would otherwise stall the shared I2C bus.
+- Examples: `probe` (read-only enumeration with timings) and `smoke` (write,
+  read back, restore on the real monitor).
+
+### Changed
+
+- `hubd` registers the DDC adapter by default. `ServiceOptions { ddc: false }`
+  keeps integration tests hermetic.
+
+### Known limitations
+
+- No UI control yet for blocking a misbehaving monitor; edit `settings.json`.
+- HID and audio adapters are not implemented (M3).
+- Scene engine is not implemented (M2).
+
 ## 0.1.0 — M0 skeleton
 
 ### Added

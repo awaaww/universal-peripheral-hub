@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "name": "KTC H27T22S",
+  "settle_ms": 150,
+  "brightness_vcp": 16,
+  "notes": "MStar scaler, MCCS 2.1, capabilities string has no model() atom; the name comes from the EDID 0xFC descriptor. Writes need ~150 ms before a read-back reflects them.",
+  "capabilities": {
+    "brightness": { "vcp": 16, "min": 0, "max": 100, "settle_ms": 150 },
+    "contrast": { "vcp": 18, "min": 0, "max": 100, "settle_ms": 150 },
+    "input_source": {
+      "vcp": 96,
+      "values": {
+        "11": "HDMI 1",
+        "12": "HDMI 2",
+        "0F": "DisplayPort 1"
+      }
+    }
+  }
+}

@@ -99,3 +99,24 @@ to find before shipping it.
 Out-of-process adapters (M3), device hot-plug notifications, and per-device
 settings overrides. Until then, an adapter is in-process, enumerates on load,
 and its settings live in `settings.json` only as an enable/disable flag.
+
+## Worked example: the DDC adapter
+
+`adapters/ddc` is the first real adapter and the one to copy from:
+
+| Concern | Where |
+| --- | --- |
+| Win32 calls, raw error codes | `adapters/ddc/src/win.rs` |
+| Hand-written `dxva2.dll` FFI | `adapters/ddc/src/dxva2.rs` |
+| Stable identity from EDID | `adapters/ddc/src/edid.rs` |
+| Parsing the MCCS capabilities string | `adapters/ddc/src/caps.rs` |
+| Hardware seam for tests | `adapters/ddc/src/transport.rs` |
+| Policy and descriptors | `adapters/ddc/src/adapter.rs` |
+
+Two lessons worth keeping:
+
+* Policy must be testable without hardware. `Core<T: Transport>` is generic over
+  the transport, so retries, the negative cache, clamping and descriptor
+  building run against `FakeTransport` in unit tests.
+* Anything expensive (the capabilities string costs ~1.1 s) is read once per
+  device and cached for the adapter's lifetime; enumeration must stay fast.

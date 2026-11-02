@@ -113,3 +113,30 @@ blocked list for DDC-hostile links, transient-vs-permanent error classes, and a
 single serialized queue for all DDC traffic because the bus is shared. Not
 adopted: their device-path identity model, WMI brightness, a second worker
 process. Reasoning and file map: `docs/reference-twinkle-tray.md`.
+
+## D14 — A VCP code is negative-cached after two failures
+
+Monitors advertise codes in their MCCS string that they then reject. Exo and
+ddcci.js both learn this the hard way: without a negative cache, a single lying
+code costs two round trips on every refresh and makes the whole panel feel
+broken. `adapter-ddc` counts strikes per `(monitor, code)`, retries twice with
+70 ms between attempts, and after two failed rounds refuses the code locally
+until the adapter is reloaded. A successful read clears the strike count. A
+rejected read is reported as `unsupported`, not `transient`, so callers do not
+retry forever.
+
+## D15 — DDC writes settle before the read-back
+
+The hub reads every write back to report `matched`. On the KTC H27T22S a
+read issued immediately after `SetVCPFeature` returns the *old* value; ~120 ms
+is enough. `settle_ms` default is 120 and can be raised per model in
+`data/monitors/<KEY>.json`. The sleep lives in the adapter, not the hub, because
+it is a property of the device, and the hub stays generic.
+
+## D16 — Integration tests opt out of the DDC adapter
+
+`Service::bootstrap` registers the hardware-dependent DDC adapter, which makes
+device counts machine-dependent. Tests use
+`Service::bootstrap_with(..., ServiceOptions { ddc: false })`; only the mock
+adapter is registered there. This keeps the pipe contract test hermetic without
+a feature flag or environment variable.

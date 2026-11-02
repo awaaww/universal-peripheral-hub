@@ -16,6 +16,7 @@ name = "hubd"
 path = "src/main.rs"
 
 [dependencies]
+adapter-ddc = { path = "../../adapters/ddc" }
 adapter-mock = { path = "../../adapters/mock" }
 anyhow = { workspace = true }
 hub-core = { path = "../hub-core" }

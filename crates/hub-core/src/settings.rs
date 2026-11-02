@@ -16,6 +16,11 @@ pub struct Settings {
     /// Adapters the user switched off. Disabled adapters are not loaded at
     /// startup and are not retried until re-enabled.
     pub disabled_adapters: Vec<String>,
+    /// Monitors (by EDID key, e.g. `SKG2725`) that must not be touched over
+    /// DDC. A monitor behind a one-way splitter or a KVM can make every request
+    /// wait seconds and stall the shared I2C bus for the other outputs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub ddc_blocked: Vec<String>,
 }
 
 impl Default for Settings {
@@ -23,6 +28,7 @@ impl Default for Settings {
         Self {
             schema_version: SCHEMA_VERSION,
             disabled_adapters: Vec::new(),
+            ddc_blocked: Vec::new(),
         }
     }
 }
