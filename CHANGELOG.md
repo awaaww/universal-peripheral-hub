@@ -8,6 +8,21 @@ All notable changes to this project are documented here. The format follows
 
 ### Added
 
+- Out-of-process adapters: `ProcAdapter` in `hubd` speaks the stdio JSON-RPC
+  dialect from `docs/adapter-protocol.md` to a child process, with a 3 s
+  handshake, per-call timeouts, stderr passthrough, and a latch after three
+  consecutive timeouts (the panel/tray can reset it).
+- `hub-core`: `Text` capability kind (`{ "type": "text", "value": … }`), used for
+  firmware versions.
+- `adapters/atk`: first real HID adapter (ATK wireless mouse, `373B:11FE`),
+  read-only in this milestone: battery %, charging, wireless link, firmware
+  version, report rate and the active DPI slot. Ships `--probe` for a headless
+  one-device dump.
+- `hubd --selftest --adapter atk` enumerates the adapter and prints every
+  capability value, exiting non-zero when the helper is missing or no device
+  answers.
+- `docs/re/atk-hub.md`: the protocol research record (frame layout, EEPROM map,
+  what the vendor binaries actually do, and what is still unknown).
 - `device.set_blocked` RPC and a panel control to stop talking to a monitor
   (and to restore it), for KVM/splitter links that hang the DDC bus. The list
   is persisted per adapter and applied before the first request.

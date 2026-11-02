@@ -5,6 +5,7 @@
 
 pub mod engine;
 pub mod foreground;
+pub mod proc;
 pub mod rpc;
 pub mod selftest;
 pub mod server;

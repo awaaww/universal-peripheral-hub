@@ -13,6 +13,7 @@ pub enum CapabilityValue {
     Enum(String),
     Rgb(Rgb),
     Bytes(Vec<u8>),
+    Text(String),
 }
 
 impl CapabilityValue {
@@ -23,6 +24,7 @@ impl CapabilityValue {
             CapabilityValue::Enum(_) => "enum",
             CapabilityValue::Rgb(_) => "rgb",
             CapabilityValue::Bytes(_) => "bytes",
+            CapabilityValue::Text(_) => "text",
         }
     }
 
@@ -65,6 +67,14 @@ impl CapabilityValue {
                 }
                 Ok(())
             }
+            (CapabilityValue::Text(value), CapabilityKind::Text { max_len }) => {
+                if value.chars().count() as u64 > u64::from(*max_len) {
+                    return Err(HubError::invalid_value(format!(
+                        "capability `{id}`: text exceeds max_len {max_len}"
+                    )));
+                }
+                Ok(())
+            }
             _ => Err(mismatch()),
         }
     }
@@ -77,6 +87,7 @@ fn kind_type_name(kind: &CapabilityKind) -> &'static str {
         CapabilityKind::Enum { .. } => "enum",
         CapabilityKind::Rgb => "rgb",
         CapabilityKind::Bytes { .. } => "bytes",
+        CapabilityKind::Text { .. } => "text",
     }
 }
 

@@ -4,6 +4,7 @@
 //! `\n`. `error.code` is always an integer (JSON-RPC 2.0 requires it); the
 //! machine-readable error class travels in `error.data.kind`.
 
+pub mod proc;
 use std::collections::BTreeMap;
 
 use hub_core::{

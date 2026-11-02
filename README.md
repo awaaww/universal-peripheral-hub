@@ -8,14 +8,15 @@ described by adapters as a set of typed **capabilities** (brightness, polling
 rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
-> **Status: M2 (scenes).** The application shell, the adapter host, the RPC
-> transport, the descriptor-driven UI, a real DDC/CI adapter and the scene engine
-> are implemented. Brightness, contrast and input source are read and written on
-> real hardware (verified on a KTC H27T22S); HDR is exposed only when the monitor
-> advertises VCP `0xE9`. Scenes switch on the foreground executable, read before
-> writing, and skip renegotiating capabilities unless you opt in. HID/audio
-> adapters, auto-start and installers are **not implemented yet** — see the
-> roadmap.
+> **Status: M3 (partial).** Panel, resident core, DDC/CI adapter, scene engine
+> and an out-of-process ATK adapter are implemented. The ATK adapter enumerates
+> the ATK wireless mouse and reads battery, charging state, wireless link,
+> firmware version, report rate and the active DPI slot; it does not write
+> anything yet. The ATK keyboard speaks VIA/QMK and the headset uses a separate
+> channel: both are visible as *not implemented* rather than faked. ATK HUB must
+> be closed for reliable reads (the adapter detects it and says so), and an idle
+> wireless mouse stops answering until it is moved. HID writes, auto-start and
+> installers are not implemented yet — see the roadmap.
 
 ## Status / roadmap
 
@@ -24,7 +25,7 @@ descriptors rather than hard-coded per vendor.
 | M0 | Tauri shell, `hubd`, adapter host, mock adapter, RPC, CI | **done** |
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
-| M3 | First HID adapter (keyboard/mouse) | not implemented |
+| M3 | First HID adapter (ATK mouse, read-only) | **partial** (mouse only; keyboard/headset not) |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
 | M5 | Session recording / replay | not implemented |
 | M6 | Packaging, auto-start, signing | not implemented |
@@ -39,7 +40,8 @@ adapter enumerate call returns `DeviceDescriptor`s that carry
 `CapabilityDescriptor`s (stable `cap_type` + adapter-local `id`, a value kind,
 a cost model and traits such as `signal_renegotiation`). First-party adapters
 run in-process; third-party or experimental adapters will run in a child process
-over stdio (not implemented in M0). See [docs/architecture.md](docs/architecture.md).
+over stdio. See [docs/architecture.md](docs/architecture.md) and
+[docs/adapter-protocol.md](docs/adapter-protocol.md).
 
 ## Repository layout
 

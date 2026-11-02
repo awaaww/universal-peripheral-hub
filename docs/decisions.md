@@ -250,3 +250,48 @@ The engine therefore records an `AppliedBy` (`startup`, `rule`, `manual`) and
 exposes it as `runtime.last_source`; the panel prints "Auto: <exe> → <scene>"
 only for `rule`, and "Applied manually: <scene>" otherwise. The distinction is
 also what the scene tests assert, so it cannot rot into a UI-only convention.
+
+## D25 — Out-of-process adapters are supervised, not trusted
+
+The ATK adapter is the first one that runs as a child process. `hubd` gives it
+the stdio dialect, a 3 s handshake and per-call deadlines, and keeps stderr in
+the hub log. Three consecutive timeouts, a protocol violation, or the child
+exiting latches the adapter as disabled — every later call fails fast with
+`Unsupported` naming the adapter — and the child is killed and reaped. The panel
+or tray re-enables it, which spawns a fresh process and re-handshakes.
+
+The alternative (auto-restart on every failure) was rejected: a vendor helper
+that crashes on startup would otherwise spin forever and hide the reason from
+the user.
+
+## D26 — The ATK collections are three different protocols
+
+`373B:11FE` (the 8K mouse dongle) exposes a 17-byte vendor collection that
+answers the 16-byte frame described in `docs/re/atk-hub.md`. With the same
+frame, `373B:1258` (RS7 Air keyboard) answers with report id 0 and empty
+payloads — it is a VIA/QMK device (`usage_page 0xFF60`, confirmed in the
+renderer bundle), and `373B:1204` (N9 Ultra headset) never answers at all; it
+also exposes a COM port. Treating them as one family would be a guess dressed
+up as support, so the ATK adapter only exposes what it has actually decoded:
+the mouse. The keyboard and headset are documented as not implemented.
+
+## D27 — An idle wireless mouse looks exactly like a conflict
+
+Two different conditions produce "write ok, no reply": ATK HUB holding the
+collection, and the mouse being asleep after inactivity. Both were observed.
+The adapter cannot tell them apart from the pipe alone, so it:
+
+* retries the probe three times with a 150 ms gap during enumeration;
+* treats a missing reply as `Transient` (never as success);
+* exposes `conflict` as a read-only bool derived from `ATK HUB.exe` being
+  present, so the UI can say "ATK HUB is running — close it if reads look stale";
+* documents "move the mouse once" in the README, because that is the real fix
+  for the sleep case.
+
+This is deliberately conservative: a false "conflict" is visible and harmless,
+a false "success" is not.
+
+When ATK HUB is running and the mouse's control collection stays silent, the
+adapter still emits one device carrying only the read-only `mouse.conflict`
+bool, so the panel shows "ATK HUB is running" instead of an empty adapter row.
+It never invents battery or DPI values for a device it could not talk to.

@@ -285,3 +285,68 @@ different opcode family. Two honest options:
 The read-only stage below is already enough to ship a first out-of-process
 adapter (battery, charging state, wireless link, firmware version for the
 mouse); DPI and rate should wait for one of the two steps above.
+
+## The mouse protocol, from the shipped renderer (stage 3a)
+
+The real implementation is not in a `.node` module. It is plain JavaScript in the
+renderer bundle `main/app.asar` → `static_filter-3fyXcGGg.js` (145 799 bytes),
+unobfuscated. Everything below is read from that file and cross-checked against
+the read-only probes above.
+
+Frame (`Command` base class): 16 bytes, `payload[0]` command id, `payload[1]`
+status, `payload[2..4]` EEPROM address (little endian u16), `payload[4]` data
+length, `payload[5..15]` data, `payload[15]` checksum with
+
+```
+checksum = (0x4D - sum(payload[0..15])) & 0xFF
+```
+
+which is the same rule the public `atk-tool` documents, and the same one our
+probe uses.
+
+Commands: `DownLoadData=1`, `DownLoadDriverStatus=2`, `GetWirelessMouseOnline=3`,
+`GetBatteryLevel=4`, `SetEEPROM=7`, `GetEEPROM=8`, `GetMouseVersion=0x12`,
+`Set4KRGBMode=20`, `Get4KRGBMode=21`, `SetFarDistanceMode=22`,
+`GetFarDistanceMode=23`, `SetDongleLightMode=24`, `GetDongleLightMode=25`,
+`GetDongleVersion=29`, upgrade status 90/91.
+
+EEPROM addresses: `reportRate=0` (+1 complement), `maxDpi=2` (+3),
+`currentDpi=4` (+5), `silentHeight=10` (+11), gear blocks `dpi1=12`, `dpi3=20`,
+`dpi5=28`, `dpi7=36`, gear colours `dpi1Color=44` … `dpi7Color=68`, RGB
+`dpiRGBLightingEffects=76`, `dpiRGBLongBrightBrightness=78`,
+`dpiRGBLongBrightSpeed=80`, `dpiRGBEnable=82`, article lamp 84.., every value
+followed by `85 - value` (the firmware's own complement byte).
+
+Report rate is a bitmask, not an index: 1000 Hz = 1, 500 = 2, 250 = 4, 125 = 8,
+2000 = 16, 4000 = 32, 8000 = 64.
+
+Gear value encoding (`MousePaw3955DpiGear`, 6-byte block at the gear address):
+
+```
+xDpi = ((b0 | b1 << 8) + 1) * (b4 & 0x01 ? 2 : 1)
+yDpi = ((b2 | b3 << 8) + 1) * (b4 & 0x10 ? 2 : 1)
+crc  = 85 - (b0 + b1 + b2 + b3 + b4)   // must equal b5
+```
+
+A second model variant stores two gears per 8-byte block as 4-byte entries; the
+renderer picks by firmware. Our mouse reports `maxDpi = 4`, so the 6-byte gear
+form at 12/20/28/36 is the one to read.
+
+`currentDpi` is a **1-based slot index**, not a DPI value; the real DPI is
+`xDpi` of that gear block. A single-byte EEPROM read returns `0xFF` — reads must
+cover the whole block (10 bytes at address 0 for the rate/max/current block,
+6 bytes per gear).
+
+### Observed conflict and idle behaviour (important for the adapter)
+
+With ATK HUB running, opening the vendor collection still succeeds, `WriteFile`
+still reports success, but `ReadFile` times out. The same happens when the
+wireless mouse is idle, and replies come back immediately again once the device
+is woken by real input. So:
+
+* "open ok + write ok + no reply" is **not** proof the write reached anything;
+* the adapter must retry once, then surface a `conflict` capability (ATK HUB
+  running) or a transient error, never a silent success;
+* we do not yet know whether ATK HUB and this adapter can coexist for *writes*;
+  that question is deferred to stage 3b, where a write is attempted with and
+  without ATK HUB running and the observed values are compared.

@@ -92,8 +92,15 @@ async fn scenes_roundtrip_and_apply() -> anyhow::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let settings_path = dir.join("settings.json");
 
-    let service =
-        Service::bootstrap_with(settings_path.clone(), None, ServiceOptions { ddc: false });
+    let service = Service::bootstrap_with(
+        settings_path.clone(),
+        None,
+        ServiceOptions {
+            ddc: false,
+            atk: false,
+            ..Default::default()
+        },
+    );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let server_pipe = pipe.clone();
     let server = tokio::spawn(async move { serve(&server_pipe, service, shutdown_rx).await });

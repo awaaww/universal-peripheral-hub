@@ -85,6 +85,14 @@ impl CapabilityDescriptor {
                     )));
                 }
             }
+            CapabilityKind::Text { max_len } => {
+                if *max_len == 0 {
+                    return Err(HubError::invalid_value(format!(
+                        "capability `{}`: text max_len must be positive",
+                        self.id
+                    )));
+                }
+            }
             CapabilityKind::Bool | CapabilityKind::Rgb => {}
         }
         Ok(())
@@ -118,6 +126,12 @@ pub enum CapabilityKind {
     },
     Rgb,
     Bytes {
+        max_len: u32,
+    },
+    /// Free-form, read-only text (firmware version, serial, model string). Not
+    /// writable: there is no honest way to validate user input against a device
+    /// that only reports it.
+    Text {
         max_len: u32,
     },
 }

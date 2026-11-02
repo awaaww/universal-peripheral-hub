@@ -3,6 +3,20 @@
 version = 3
 
 [[package]]
+name = "adapter-atk"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hub-core",
+ "hub-proto",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "adapter-ddc"
 version = "0.1.0"
 dependencies = [

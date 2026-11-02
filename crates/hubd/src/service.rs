@@ -13,6 +13,7 @@ use hub_proto::{
 use tokio::sync::broadcast;
 
 use crate::engine::{AppliedBy, DeviceIo, DocumentMode, SceneEngine};
+use crate::proc;
 
 /// Events pushed to connected clients. `hubd` is the single owner of device
 /// state; clients never poll for changes.
@@ -66,17 +67,80 @@ impl DeviceIo for HubIo {
 
 /// Which built-in adapters to register.
 ///
-/// Tests need a hermetic hub, so the DDC adapter — the only one that depends on
-/// the machine it runs on — can be left out.
-#[derive(Debug, Clone, Copy)]
+/// Tests need a hermetic hub, so the adapters that depend on the machine they
+/// run on can be left out: DDC talks to real monitors, ATK needs its helper
+/// executable.
+#[derive(Debug, Clone)]
 pub struct ServiceOptions {
     pub ddc: bool,
+    /// Register the out-of-process ATK adapter when its executable is found.
+    pub atk: bool,
+    /// Explicit helper path, overriding [`find_atk_adapter`]. Tests use this to
+    /// point at a scripted executable (or at nothing).
+    pub atk_binary: Option<PathBuf>,
 }
 
 impl Default for ServiceOptions {
     fn default() -> Self {
-        Self { ddc: true }
+        Self {
+            ddc: true,
+            atk: true,
+            atk_binary: None,
+        }
     }
+}
+
+const ATK_BINARY_NAME: &str = "atk-adapter.exe";
+
+/// Locate the ATK helper executable.
+///
+/// Same search order as [`crate::ui::find_ui_executable`]: an explicit
+/// environment override, then a sibling of `hubd.exe` (installed layout), then
+/// the usual development build directories relative to the executable and the
+/// workspace root. A missing helper is not an error — the rest of the hub works
+/// without it.
+pub fn find_atk_adapter() -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os("UPH_ATK_ADAPTER") {
+        let path = PathBuf::from(explicit);
+        if path.is_file() {
+            return Some(path);
+        }
+        tracing::warn!(
+            path = %path.display(),
+            "UPH_ATK_ADAPTER does not point at a file; falling back to autodetection"
+        );
+    }
+
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+
+    // Six levels covers `target/debug`, `target/release` and a few nested
+    // layouts (`crates/hubd/target/...`, `adapters/atk/target/...`).
+    for _ in 0..6 {
+        for candidate in atk_candidates(&dir) {
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+        if !dir.pop() {
+            break;
+        }
+    }
+    None
+}
+
+fn atk_candidates(dir: &Path) -> Vec<PathBuf> {
+    let mut found = vec![dir.join(ATK_BINARY_NAME)];
+    for profile in ["debug", "release"] {
+        found.push(dir.join("target").join(profile).join(ATK_BINARY_NAME));
+        found.push(
+            dir.join("adapters/atk/target")
+                .join(profile)
+                .join(ATK_BINARY_NAME),
+        );
+    }
+    found.push(dir.join("bin").join(ATK_BINARY_NAME));
+    found
 }
 
 impl Service {
@@ -112,6 +176,27 @@ impl Service {
         if options.ddc {
             if let Err(err) = hub.register(adapter_ddc::adapter_info(), adapter_ddc::factory()) {
                 tracing::warn!(error = %err, "cannot register the DDC adapter");
+            }
+        }
+
+        // Out of process, so a crash inside the helper cannot take the hub
+        // down with it. A missing executable only means the adapter is not
+        // registered; the hub still works without it.
+        if options.atk {
+            match options.atk_binary.clone().or_else(find_atk_adapter) {
+                Some(binary) => {
+                    if let Err(err) =
+                        hub.register(proc::adapter_info(), proc::factory(binary.clone()))
+                    {
+                        tracing::warn!(error = %err, "cannot register the ATK adapter");
+                    } else {
+                        tracing::info!(path = %binary.display(), "ATK adapter registered");
+                    }
+                }
+                None => tracing::info!(
+                    "no ATK adapter executable found; adapter `atk` is not registered \
+                     (set UPH_ATK_ADAPTER to point at it)"
+                ),
             }
         }
 
@@ -225,6 +310,13 @@ impl Service {
     pub fn set_enabled(&self, adapter: &str, enabled: bool) -> Result<DevicesResult> {
         let (result, disabled) = {
             let mut hub = self.hub.lock().expect("hub mutex poisoned");
+            if enabled {
+                // A crashed adapter can stay *loaded* while its instance is
+                // latched off, and `Hub::load` is a no-op for a loaded
+                // adapter. Dropping the instance first gives the enable a
+                // fresh process; the tray/panel re-enable path relies on it.
+                hub.unload(adapter)?;
+            }
             hub.set_enabled(adapter, enabled)?;
             let settings = self.settings.lock().expect("settings mutex poisoned");
             (
@@ -237,6 +329,37 @@ impl Service {
             let mut settings = self.settings.lock().expect("settings mutex poisoned");
             settings.update(|settings| settings.disabled_adapters = disabled)?;
         }
+
+        self.broadcast(Event::DevicesChanged(result.clone()));
+        Ok(result)
+    }
+
+    /// Rebuild one adapter instance, clearing any latched failure state.
+    ///
+    /// `ProcAdapter` disables itself after three consecutive timeouts or when
+    /// its child dies, and `Hub` stores adapter instances behind
+    /// `Box<dyn Adapter>`, which cannot be downcast. Dropping the instance and
+    /// letting the registered factory build a new one is therefore the reset
+    /// path — the old instance's `Drop` kills and reaps its child process.
+    ///
+    /// No-op for an adapter the user has disabled: enabling it later already
+    /// builds a fresh instance.
+    pub fn reset_adapter(&self, adapter: &str) -> Result<DevicesResult> {
+        let result = {
+            let mut hub = self.hub.lock().expect("hub mutex poisoned");
+            if !hub.is_registered(adapter) {
+                return Err(HubError::new(
+                    hub_core::ErrorKind::UnknownAdapter,
+                    format!("unknown adapter `{adapter}`"),
+                ));
+            }
+            hub.unload(adapter)?;
+            if hub.is_enabled(adapter) {
+                hub.load(adapter)?;
+            }
+            let settings = self.settings.lock().expect("settings mutex poisoned");
+            devices_result(&hub, settings.settings())
+        };
 
         self.broadcast(Event::DevicesChanged(result.clone()));
         Ok(result)

@@ -45,7 +45,11 @@ async fn pipe_round_trip_and_device_push() -> anyhow::Result<()> {
     let service = Service::bootstrap_with(
         dir.join("settings.json"),
         None,
-        ServiceOptions { ddc: false },
+        ServiceOptions {
+            ddc: false,
+            atk: false,
+            ..Default::default()
+        },
     );
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let server_pipe = pipe.clone();

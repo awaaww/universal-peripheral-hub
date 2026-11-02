@@ -96,7 +96,12 @@ to find before shipping it.
 
 ## Not implemented yet
 
-Out-of-process adapters (M3), device hot-plug notifications, and per-device
+Out-of-process adapters are implemented in M3 (`crates/hubd/src/proc.rs` plus
+`docs/adapter-protocol.md`); the ATK adapter under `adapters/atk` is the worked
+example, and it is a separate binary discovered next to `hubd.exe` or through
+`UPH_ATK_ADAPTER`.
+
+Device hot-plug notifications, and per-device
 settings overrides. Until then, an adapter is in-process, enumerates on load,
 and its settings live in `settings.json` only as an enable/disable flag.
 
