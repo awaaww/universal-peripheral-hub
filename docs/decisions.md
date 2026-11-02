@@ -103,3 +103,13 @@ synchronous `WriteFile` from a `std::fs::File` against such an instance never
 completes, which shows up as `hub_request` hanging forever while the server only
 sees the first message. The panel therefore runs one tokio runtime thread that
 owns the connection and forwards requests over a channel.
+
+## D13 — DDC/CI adapter follows Twinkle Tray's operation model
+
+Twinkle Tray (MIT) is the reference for *how* to talk to monitors, not for what
+to show. Adopted: stable identity (never enumeration index), handle reuse across
+enumerations, fast/accurate validation split, capabilities cache, a user-managed
+blocked list for DDC-hostile links, transient-vs-permanent error classes, and a
+single serialized queue for all DDC traffic because the bus is shared. Not
+adopted: their device-path identity model, WMI brightness, a second worker
+process. Reasoning and file map: `docs/reference-twinkle-tray.md`.
