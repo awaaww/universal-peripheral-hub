@@ -21,11 +21,11 @@ const state: UiState = {
   values: new Map(),
   readErrors: new Map(),
   status: new Map(),
-  busy: new Set(),
   online: false,
   version: null,
   error: null,
   loading: true,
+  blockedOpen: new Set(),
 };
 
 function call<T>(method: string, params: unknown): Promise<T> {
@@ -49,16 +49,21 @@ function key(device: string, capability: string): string {
   return `${device}/${capability}`;
 }
 
+/** Adopt a snapshot from any RPC or push and repaint the panel. */
+function applySnapshot(snapshot: Snapshot): void {
+  state.snapshot = snapshot;
+  state.online = true;
+  state.error = null;
+  state.version = null;
+  paint();
+}
+
 async function refresh(): Promise<void> {
   state.loading = true;
   paint();
   try {
     const snapshot = await call<Snapshot>("devices.list", null);
-    state.snapshot = snapshot;
-    state.online = true;
-    state.error = null;
-    state.version = null;
-    paint();
+    applySnapshot(snapshot);
     await loadValues(snapshot.devices);
   } catch (err) {
     state.online = false;
@@ -113,34 +118,100 @@ function setStatus(id: string, text: string, tone: "ok" | "error" | "saving") {
   paint();
 }
 
-async function write(
-  device: DeviceDescriptor,
-  capability: CapabilityDescriptor,
-  value: CapabilityValue,
-): Promise<void> {
+interface PendingWrite {
+  device: DeviceDescriptor;
+  capability: CapabilityDescriptor;
+  value: CapabilityValue;
+}
+
+/**
+ * Pending writes, one FIFO per device (`deviceId -> capabilityId -> write`).
+ *
+ * The DDC bus is serial and slow: the hub sends one write to a device at a
+ * time and the order matters, so a newer value waits in the queue instead of
+ * being dropped while a write is in flight. Inside a device the queue is keyed
+ * by capability, so a newer value for the same capability replaces the queued
+ * one: a fast drag coalesces into the last value instead of replaying every
+ * intermediate step.
+ */
+const pending = new Map<string, Map<string, PendingWrite>>();
+const draining = new Set<string>();
+
+function queueFor(deviceId: string): Map<string, PendingWrite> {
+  let queue = pending.get(deviceId);
+  if (!queue) {
+    queue = new Map();
+    pending.set(deviceId, queue);
+  }
+  return queue;
+}
+
+function firstQueued(queue: Map<string, PendingWrite> | undefined): PendingWrite | undefined {
+  if (!queue) return undefined;
+  for (const item of queue.values()) return item;
+  return undefined;
+}
+
+function isQueued(deviceId: string, capabilityId: string): boolean {
+  return pending.get(deviceId)?.has(capabilityId) ?? false;
+}
+
+function write(device: DeviceDescriptor, capability: CapabilityDescriptor, value: CapabilityValue): void {
   const id = key(device.id, capability.id);
-  if (state.busy.has(id)) return;
-  state.busy.add(id);
+  // Optimistic value: the slider keeps the position the user dragged to while
+  // the write is on the wire.
   state.values.set(id, value);
+  setStatus(id, "Saving…", "saving");
+  queueFor(device.id).set(capability.id, { device, capability, value });
+  void drain(device.id);
+}
+
+async function drain(deviceId: string): Promise<void> {
+  if (draining.has(deviceId)) return;
+  draining.add(deviceId);
+  try {
+    for (;;) {
+      const queue = pending.get(deviceId);
+      const next = firstQueued(queue);
+      if (!queue || !next) break;
+      // Take the write out before sending it: anything still in the queue is
+      // by definition newer than the value currently on the bus.
+      queue.delete(next.capability.id);
+      await send(next);
+    }
+  } finally {
+    draining.delete(deviceId);
+    const queue = pending.get(deviceId);
+    if (queue && queue.size === 0) pending.delete(deviceId);
+  }
+}
+
+async function send(item: PendingWrite): Promise<void> {
+  const id = key(item.device.id, item.capability.id);
   setStatus(id, "Saving…", "saving");
 
   let attempt = 0;
   for (;;) {
     try {
       const outcome = await call<WriteOutcome>("capability.write", {
-        device: device.id,
-        capability: capability.id,
-        value,
+        device: item.device.id,
+        capability: item.capability.id,
+        value: item.value,
       });
-      state.values.set(id, outcome.value);
-      if (outcome.matched) {
-        setStatus(id, `Synced · read back ${valueOf(capability, outcome.value)}`, "ok");
-      } else if (outcome.readback_error) {
-        setStatus(id, `Applied, read-back failed: ${outcome.readback_error}`, "error");
-      } else {
-        setStatus(id, `Device kept ${valueOf(capability, outcome.value)} instead`, "error");
+      // A newer value for this capability may have been queued while this one
+      // was on the bus. Do not snap the slider back to the stale read-back.
+      const superseded = isQueued(item.device.id, item.capability.id);
+      if (!superseded) {
+        state.values.set(id, outcome.value);
+        if (outcome.matched) {
+          setStatus(id, `Synced · read back ${valueOf(item.capability, outcome.value)}`, "ok");
+        } else if (outcome.readback_error) {
+          setStatus(id, `Applied, read-back failed: ${outcome.readback_error}`, "error");
+        } else {
+          setStatus(id, `Device kept ${valueOf(item.capability, outcome.value)} instead`, "error");
+        }
       }
-      break;
+      return;
     } catch (err) {
       const failure = describe(err);
       // One automatic retry for errors the hub classifies as transient. Real
@@ -152,15 +223,15 @@ async function write(
         await new Promise((resolve) => setTimeout(resolve, 300));
         continue;
       }
-      state.values.delete(id);
-      state.busy.delete(id);
-      setStatus(id, `${failure.kind ?? "error"}: ${failure.message}`, "error");
-      paint();
+      // Drop the optimistic value unless a newer write is already queued for
+      // the same capability; that queued value is what the user last asked for.
+      if (!isQueued(item.device.id, item.capability.id)) {
+        state.values.delete(id);
+        setStatus(id, `${failure.kind ?? "error"}: ${failure.message}`, "error");
+      }
       return;
     }
   }
-  state.busy.delete(id);
-  paint();
 }
 
 async function toggleAdapter(adapter: AdapterState): Promise<void> {
@@ -169,8 +240,7 @@ async function toggleAdapter(adapter: AdapterState): Promise<void> {
       adapter: adapter.id,
       enabled: !adapter.enabled,
     });
-    state.snapshot = snapshot;
-    paint();
+    applySnapshot(snapshot);
     await loadValues(snapshot.devices);
   } catch (err) {
     state.error = describe(err).message;
@@ -178,10 +248,51 @@ async function toggleAdapter(adapter: AdapterState): Promise<void> {
   }
 }
 
+/**
+ * A block-list target: a live device is addressed by id, an already ignored one
+ * by the persisted (adapter, token) pair — blocked devices are no longer
+ * enumerated, so they have no device id to address.
+ */
+type BlockTarget = { device: string } | { adapter: string; token: string };
+
+async function setBlocked(target: BlockTarget, blocked: boolean): Promise<void> {
+  try {
+    const snapshot = await call<Snapshot>("device.set_blocked", { ...target, blocked });
+    applySnapshot(snapshot);
+    await loadValues(snapshot.devices);
+    paint();
+  } catch (err) {
+    state.error = describe(err).message;
+    paint();
+  }
+}
+
+async function ignoreDevice(device: DeviceDescriptor): Promise<void> {
+  const question =
+    `Ignore “${device.name}”?\n\n` +
+    "Stop talking to this monitor. Use this for a KVM or splitter that hangs the DDC bus.\n\n" +
+    "You can restore it later from the adapters strip.";
+  if (!window.confirm(question)) return;
+  await setBlocked({ device: device.id }, true);
+}
+
+async function restoreDevice(adapter: AdapterState, token: string): Promise<void> {
+  await setBlocked({ adapter: adapter.id, token }, false);
+}
+
+function toggleBlockedList(adapterId: string): void {
+  if (state.blockedOpen.has(adapterId)) state.blockedOpen.delete(adapterId);
+  else state.blockedOpen.add(adapterId);
+  paint();
+}
+
 const actions: Actions = {
-  write: (device, capability, value) => void write(device, capability, value),
+  write: (device, capability, value) => write(device, capability, value),
   toggleAdapter: (adapter) => void toggleAdapter(adapter),
   rescan: () => void refresh(),
+  ignoreDevice: (device) => void ignoreDevice(device),
+  restoreDevice: (adapter, token) => void restoreDevice(adapter, token),
+  toggleBlockedList: (adapterId) => toggleBlockedList(adapterId),
 };
 
 function paint(): void {
@@ -189,8 +300,8 @@ function paint(): void {
 }
 
 void listen<Snapshot>("hub://devices-changed", (event) => {
-  state.snapshot = event.payload;
-  paint();
+  // The push carries the same payload as devices.list, block list included.
+  applySnapshot(event.payload);
   void loadValues(event.payload.devices);
 }).catch((err) => {
   // Losing the push channel is not fatal: every action still talks to hubd.

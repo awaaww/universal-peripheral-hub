@@ -239,27 +239,68 @@ fn run_connection(
         }
         let _ = ready.send(Ok(()));
 
-        let mut next_id = 2u64;
-        while let Some(Command::Call {
-            method,
-            params,
-            reply,
-        }) = commands.recv().await
-        {
-            let id = next_id;
-            next_id += 1;
-            let request = hub_proto::Request::call(id, &method, params);
-            if let Err(err) = write_request(&mut writer, &request).await {
-                let _ = reply.send(Err(err));
-                break;
-            }
-            match read_response(&mut lines, id).await {
-                Ok(value) => {
-                    let _ = reply.send(response_result(value));
+        // One task owns the read side so an unsolicited push is delivered the
+        // moment it arrives. Reading only while a response was expected left
+        // `devices.changed` sitting in the pipe until the next call, so the
+        // panel showed a stale list after an adapter was toggled elsewhere.
+        let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel();
+        tokio::spawn(async move {
+            loop {
+                match read_line(&mut lines).await {
+                    Ok(value) => {
+                        if line_tx.send(Ok(value)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        let _ = line_tx.send(Err(err));
+                        break;
+                    }
                 }
-                Err(err) => {
-                    let _ = reply.send(Err(err));
-                    break;
+            }
+        });
+
+        let mut next_id = 2u64;
+        let mut pending: Option<(u64, mpsc::Sender<Result<Value, HubFailure>>)> = None;
+
+        loop {
+            tokio::select! {
+                // Only one request is in flight at a time: the server answers in
+                // order, and a second outstanding request would only complicate
+                // the bookkeeping. Commands wait in the channel.
+                command = commands.recv(), if pending.is_none() => {
+                    let Some(Command::Call { method, params, reply }) = command else {
+                        break;
+                    };
+                    let id = next_id;
+                    next_id += 1;
+                    let request = hub_proto::Request::call(id, &method, params);
+                    if let Err(err) = write_request(&mut writer, &request).await {
+                        let _ = reply.send(Err(err));
+                        break;
+                    }
+                    pending = Some((id, reply));
+                }
+                line = line_rx.recv() => {
+                    let Some(line) = line else { break };
+                    match line {
+                        Ok(value) => {
+                            let wanted = pending.as_ref().map(|(id, _)| *id);
+                            if wanted.is_some() && value.get("id").and_then(Value::as_u64) == wanted {
+                                if let Some((_, reply)) = pending.take() {
+                                    let _ = reply.send(response_result(value));
+                                }
+                            } else {
+                                forward_notice(&value);
+                            }
+                        }
+                        Err(err) => {
+                            if let Some((_, reply)) = pending.take() {
+                                let _ = reply.send(Err(err));
+                            }
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -284,8 +325,8 @@ where
         .map_err(|err| HubFailure::new(format!("cannot flush to hubd: {err}")))
 }
 
-/// Reads lines until the response with `id` arrives, forwarding notices.
-async fn read_response<R>(reader: &mut R, id: u64) -> Result<Value, HubFailure>
+/// Reads one JSON object, skipping blank or malformed lines.
+async fn read_line<R>(reader: &mut R) -> Result<Value, HubFailure>
 where
     R: AsyncBufReadExt + Unpin,
 {
@@ -296,17 +337,31 @@ where
             Ok(_) => {}
             Err(err) => return Err(HubFailure::new(format!("cannot read from hubd: {err}"))),
         }
-        let Ok(value) = serde_json::from_str::<Value>(&line) else {
-            continue;
-        };
+        if let Ok(value) = serde_json::from_str::<Value>(&line) {
+            return Ok(value);
+        }
+    }
+}
+
+/// Reads lines until the response with `id` arrives, forwarding notices.
+async fn read_response<R>(reader: &mut R, id: u64) -> Result<Value, HubFailure>
+where
+    R: AsyncBufReadExt + Unpin,
+{
+    loop {
+        let value = read_line(reader).await?;
         if value.get("id").and_then(Value::as_u64) == Some(id) {
             return Ok(value);
         }
-        if value.get("method").and_then(Value::as_str) == Some(hub_proto::method::DEVICES_CHANGED) {
-            let payload = value.get("params").cloned().unwrap_or(Value::Null);
-            if let Some(app) = APP.get() {
-                let _ = app.emit("hub://devices-changed", payload);
-            }
+        forward_notice(&value);
+    }
+}
+
+fn forward_notice(value: &Value) {
+    if value.get("method").and_then(Value::as_str) == Some(hub_proto::method::DEVICES_CHANGED) {
+        let payload = value.get("params").cloned().unwrap_or(Value::Null);
+        if let Some(app) = APP.get() {
+            let _ = app.emit("hub://devices-changed", payload);
         }
     }
 }

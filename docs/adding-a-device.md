@@ -100,6 +100,14 @@ Out-of-process adapters (M3), device hot-plug notifications, and per-device
 settings overrides. Until then, an adapter is in-process, enumerates on load,
 and its settings live in `settings.json` only as an enable/disable flag.
 
+## Device ids are `adapter:token`
+
+`device.set_blocked` addresses a blocked device by `(adapter, token)` because a
+blocked device is not enumerated. That only works if the part of the device id
+after the colon *is* the token your adapter persists for the block list — for
+the DDC adapter, the lower-cased EDID key (`ddc:skg2725`). Keep that shape if
+your adapter can hang the machine it runs on.
+
 ## Worked example: the DDC adapter
 
 `adapters/ddc` is the first real adapter and the one to copy from:

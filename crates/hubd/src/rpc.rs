@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use hub_proto::{
-    codes, method, ReadParams, Request, Response, RpcError, SetEnabledParams, WriteParams,
+    codes, method, ReadParams, Request, Response, RpcError, SetBlockedParams, SetEnabledParams,
+    WriteParams,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -58,6 +59,14 @@ pub async fn dispatch(service: Arc<Service>, request: Request) -> Option<Respons
                 svc.set_enabled(&params.adapter, params.enabled)
             })
             .await
+            {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        method::DEVICE_SET_BLOCKED => match parse::<SetBlockedParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.set_device_blocked(&params)).await
             {
                 Ok(result) => success(id, &result),
                 Err(err) => Response::failure(id, err),

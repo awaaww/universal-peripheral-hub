@@ -140,3 +140,37 @@ device counts machine-dependent. Tests use
 `Service::bootstrap_with(..., ServiceOptions { ddc: false })`; only the mock
 adapter is registered there. This keeps the pipe contract test hermetic without
 a feature flag or environment variable.
+
+## D17 — Blocking is adapter-scoped and applied by rebuilding the adapter
+
+A monitor behind a one-way splitter can make every DDC request wait seconds,
+and the GPU's I2C bus is shared, so one bad link stalls all of them. The block
+list therefore has to be consulted *before* the first request, i.e. inside the
+adapter, not filtered afterwards in the hub.
+
+Two consequences:
+
+* The persisted token is adapter-specific (`SKG2725`, an EDID key), so the
+  setting is keyed by adapter id: `blocked: { "ddc": ["SKG2725"] }` on the wire,
+  `ddc_blocked` in `settings.json`. Clients never interpret tokens, they echo
+  them back with `{ adapter, token }`.
+* Changing the list rebuilds that adapter (unload + load). Re-enumeration is
+  cheap when the blocked monitor is skipped, and it avoids a second, live copy
+  of the list drifting out of sync with the file.
+
+`device.set_blocked` accepts either a device id (from a card) or the
+`(adapter, token)` pair (from the restore list), because a blocked device is by
+definition not enumerated and therefore has no id to address.
+
+## D18 — The panel's pipe client reads while idle
+
+The first client only read the pipe while waiting for a response to a request it
+had just sent. `hubd` pushes `devices.changed` on its own schedule (a tray menu,
+a second window, a block from another client), so those pushes sat in the pipe
+until the next request — the panel showed a stale device list and the block
+control looked broken. The client now runs a dedicated reader task and selects
+between it and the command channel, so a push is delivered immediately.
+
+The reader is a separate task rather than a `select!` on `read_line`, because
+`AsyncBufReadExt::read_line` is not cancel safe: dropping it mid-line loses
+bytes that were already consumed from the socket.

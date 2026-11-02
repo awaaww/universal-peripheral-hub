@@ -93,7 +93,7 @@ pub fn display_outputs() -> Vec<DisplayOutput> {
         );
     }
 
-    monitors
+    let mut outputs: Vec<DisplayOutput> = monitors
         .into_iter()
         .map(|(hmonitor, info)| {
             let display_name = wide_to_string(&info.szDevice);
@@ -120,7 +120,16 @@ pub fn display_outputs() -> Vec<DisplayOutput> {
                 identity,
             }
         })
-        .collect()
+        .collect();
+
+    // EnumDisplayMonitors order is not documented and changes when a monitor
+    // is re-plugged, which would shuffle the panel's cards. Sorting by the
+    // desktop geometry keeps the order stable and matches what the user sees
+    // left-to-right, then top-to-bottom. Ties fall back to the device name.
+    outputs.sort_by(|a, b| {
+        (a.rect.0, a.rect.1, &a.display_name).cmp(&(b.rect.0, b.rect.1, &b.display_name))
+    });
+    outputs
 }
 
 /// (display name, device id, device key, adapter name) per active output.

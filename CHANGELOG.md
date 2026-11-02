@@ -6,6 +6,19 @@ All notable changes to this project are documented here. The format follows
 
 ## Unreleased
 
+### Added
+
+- `device.set_blocked` RPC and a panel control to stop talking to a monitor
+  (and to restore it), for KVM/splitter links that hang the DDC bus. The list
+  is persisted per adapter and applied before the first request.
+- Monitors are ordered left-to-right, top-to-bottom by their desktop geometry,
+  so card order no longer follows the undocumented `EnumDisplayMonitors` order.
+
+### Fixed
+
+- Dragging a slider while a write was in flight silently dropped the new value;
+  writes are now queued per device and coalesced to the newest value.
+
 ## 0.2.0 — M1 DDC/CI
 
 ### Added

@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use hub_core::{CapabilityValue, Hub, HubError, Result, SettingsStore, WriteOutcome};
-use hub_proto::{DevicesResult, HelloResult, ReadResult, PROTOCOL_VERSION};
+use hub_core::{CapabilityValue, Hub, HubError, Result, Settings, SettingsStore, WriteOutcome};
+use hub_proto::{DevicesResult, HelloResult, ReadResult, SetBlockedParams, PROTOCOL_VERSION};
 use tokio::sync::broadcast;
 
 /// Events pushed to connected clients. `hubd` is the single owner of device
@@ -116,11 +117,8 @@ impl Service {
 
     pub fn snapshot(&self) -> DevicesResult {
         let hub = self.hub.lock().expect("hub mutex poisoned");
-        DevicesResult {
-            devices: hub.devices(),
-            adapters: hub.adapters(),
-            revision: hub.revision(),
-        }
+        let settings = self.settings.lock().expect("settings mutex poisoned");
+        devices_result(&hub, settings.settings())
     }
 
     pub fn read(&self, device: &str, capability: &str) -> Result<ReadResult> {
@@ -158,12 +156,9 @@ impl Service {
         let (result, disabled) = {
             let mut hub = self.hub.lock().expect("hub mutex poisoned");
             hub.set_enabled(adapter, enabled)?;
+            let settings = self.settings.lock().expect("settings mutex poisoned");
             (
-                DevicesResult {
-                    devices: hub.devices(),
-                    adapters: hub.adapters(),
-                    revision: hub.revision(),
-                },
+                devices_result(&hub, settings.settings()),
                 hub.disabled_adapters(),
             )
         };
@@ -172,6 +167,56 @@ impl Service {
             let mut settings = self.settings.lock().expect("settings mutex poisoned");
             settings.update(|settings| settings.disabled_adapters = disabled)?;
         }
+
+        self.broadcast(Event::DevicesChanged(result.clone()));
+        Ok(result)
+    }
+
+    /// Stop talking to one device, or resume.
+    ///
+    /// The block list is adapter-specific — the DDC adapter keys it by EDID so
+    /// a monitor survives a replug on a different port — and it is applied when
+    /// the adapter is built. Changing it therefore rebuilds that adapter: one
+    /// re-enumeration instead of keeping a second, live-updated block list in
+    /// two places.
+    pub fn set_device_blocked(&self, params: &SetBlockedParams) -> Result<DevicesResult> {
+        let (adapter, token) = params.target()?;
+        let token = token.to_ascii_uppercase();
+
+        let result = {
+            let mut hub = self.hub.lock().expect("hub mutex poisoned");
+            if !hub.is_registered(&adapter) {
+                return Err(HubError::new(
+                    hub_core::ErrorKind::UnknownAdapter,
+                    format!("unknown adapter `{adapter}`"),
+                ));
+            }
+            if adapter != "ddc" {
+                return Err(HubError::unsupported(format!(
+                    "adapter `{adapter}` has no block list"
+                )));
+            }
+
+            let mut settings = self.settings.lock().expect("settings mutex poisoned");
+            settings.update(|settings| {
+                settings
+                    .ddc_blocked
+                    .retain(|key| !key.eq_ignore_ascii_case(&token));
+                if params.blocked {
+                    settings.ddc_blocked.push(token.clone());
+                }
+            })?;
+
+            let enabled = hub
+                .adapters()
+                .iter()
+                .any(|state| state.id == adapter && state.enabled);
+            if enabled {
+                hub.unload(&adapter)?;
+                hub.load(&adapter)?;
+            }
+            devices_result(&hub, settings.settings())
+        };
 
         self.broadcast(Event::DevicesChanged(result.clone()));
         Ok(result)
@@ -207,6 +252,21 @@ impl Service {
 
     pub fn ui_path(&self) -> Option<&std::path::Path> {
         self.ui.as_deref()
+    }
+}
+
+/// The snapshot every client sees: live device state plus the user's block
+/// list, which lives in settings rather than in the adapter.
+fn devices_result(hub: &Hub, settings: &Settings) -> DevicesResult {
+    let mut blocked = BTreeMap::new();
+    if !settings.ddc_blocked.is_empty() {
+        blocked.insert("ddc".to_string(), settings.ddc_blocked.clone());
+    }
+    DevicesResult {
+        devices: hub.devices(),
+        adapters: hub.adapters(),
+        revision: hub.revision(),
+        blocked,
     }
 }
 

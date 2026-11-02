@@ -50,6 +50,9 @@ export interface Snapshot {
   devices: DeviceDescriptor[];
   adapters: AdapterState[];
   revision: number;
+  /// Devices the user asked the hub not to talk to, keyed by adapter id.
+  /// Tokens are opaque to the UI: it renders and echoes them back unchanged.
+  blocked?: Record<string, string[]>;
 }
 
 export type CapabilityValue =

@@ -4,6 +4,8 @@
 //! `\n`. `error.code` is always an integer (JSON-RPC 2.0 requires it); the
 //! machine-readable error class travels in `error.data.kind`.
 
+use std::collections::BTreeMap;
+
 use hub_core::{AdapterState, CapabilityValue, DeviceDescriptor, HubError, WriteOutcome};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -49,6 +51,9 @@ pub mod method {
     pub const CAPABILITY_READ: &str = "capability.read";
     pub const CAPABILITY_WRITE: &str = "capability.write";
     pub const ADAPTER_SET_ENABLED: &str = "adapter.set_enabled";
+    /// Stop (or resume) talking to one device. The persisted token is
+    /// adapter-specific and opaque to the client.
+    pub const DEVICE_SET_BLOCKED: &str = "device.set_blocked";
     /// Notification sent by a second `hubd` instance (or by a shortcut) asking
     /// the running instance to show the panel.
     pub const ACTIVATE: &str = "hub.activate";
@@ -206,6 +211,11 @@ pub struct DevicesResult {
     pub devices: Vec<DeviceDescriptor>,
     pub adapters: Vec<AdapterState>,
     pub revision: u64,
+    /// Devices the user has told us not to talk to, per adapter id. The
+    /// tokens are opaque: the DDC adapter uses EDID keys such as `SKG2725`,
+    /// and the panel only ever echoes them back.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub blocked: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -225,6 +235,38 @@ pub struct WriteParams {
 pub struct SetEnabledParams {
     pub adapter: String,
     pub enabled: bool,
+}
+
+/// Address a device either by its id (when it is visible) or by the persisted
+/// `(adapter, token)` pair (when it is blocked and therefore not enumerated).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetBlockedParams {
+    #[serde(default)]
+    pub device: Option<String>,
+    #[serde(default)]
+    pub adapter: Option<String>,
+    #[serde(default)]
+    pub token: Option<String>,
+    pub blocked: bool,
+}
+
+impl SetBlockedParams {
+    /// The adapter id and its opaque block token, whichever way the client
+    /// addressed the device.
+    pub fn target(&self) -> Result<(String, String), HubError> {
+        match (&self.device, &self.adapter, &self.token) {
+            (Some(device), _, _) => {
+                let (adapter, token) = device.split_once(':').ok_or_else(|| {
+                    HubError::invalid_value(format!("`{device}` is not a device id"))
+                })?;
+                Ok((adapter.to_string(), token.to_string()))
+            }
+            (None, Some(adapter), Some(token)) => Ok((adapter.clone(), token.clone())),
+            _ => Err(HubError::invalid_value(
+                "send either `device` or both `adapter` and `token`",
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

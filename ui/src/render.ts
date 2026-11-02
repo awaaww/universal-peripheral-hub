@@ -13,17 +13,21 @@ export interface UiState {
   values: Map<string, CapabilityValue>;
   readErrors: Map<string, HubFailure>;
   status: Map<string, { text: string; tone: "ok" | "error" | "saving" }>;
-  busy: Set<string>;
   online: boolean;
   version: string | null;
   error: string | null;
   loading: boolean;
+  /// Adapter ids whose ignored-device list is expanded in the adapters strip.
+  blockedOpen: Set<string>;
 }
 
 export interface Actions {
   write(device: DeviceDescriptor, capability: CapabilityDescriptor, value: CapabilityValue): void;
   toggleAdapter(adapter: AdapterState): void;
   rescan(): void;
+  ignoreDevice(device: DeviceDescriptor): void;
+  restoreDevice(adapter: AdapterState, token: string): void;
+  toggleBlockedList(adapterId: string): void;
 }
 
 function key(device: string, capability: string): string {
@@ -34,6 +38,7 @@ export function render(root: HTMLElement, state: UiState, actions: Actions): voi
   clear(root);
   root.append(header(state, actions));
   if (!state.online) root.append(offline(state, actions));
+  else if (state.error) root.append(actionError(state));
   if (state.snapshot) root.append(adapters(state.snapshot.adapters, state, actions));
   root.append(devices(state, actions));
   root.append(footer());
@@ -74,37 +79,87 @@ function offline(state: UiState, actions: Actions): HTMLElement {
   ]);
 }
 
+/** The hub answered, but the last action was refused (e.g. a block-list RPC). */
+function actionError(state: UiState): HTMLElement {
+  return el("section", { class: "banner banner-error" }, [
+    el("div", {}, [
+      el("strong", { text: "That action failed" }),
+      el("p", { class: "muted", text: state.error ?? "" }),
+    ]),
+  ]);
+}
+
 function adapters(list: AdapterState[], state: UiState, actions: Actions): HTMLElement {
   const strip = el("section", { class: "adapters" }, [
     el("h2", { class: "section-title", text: "Adapters" }),
   ]);
   const row = el("div", { class: "adapter-row" });
+  // A missing block list (older hub, or nothing ignored) is simply empty.
+  const blocked = state.snapshot?.blocked ?? {};
   for (const adapter of list) {
+    const tokens = blocked[adapter.id] ?? [];
     const button = el("button", {
       class: `button button-small ${adapter.enabled ? "" : "button-ghost"}`,
       text: adapter.enabled ? "Disable" : "Enable",
-      disabled: state.busy.has(adapter.id),
       onclick: () => actions.toggleAdapter(adapter),
     });
-    row.append(
-      el("div", { class: `adapter ${adapter.enabled ? "" : "adapter-off"}` }, [
-        el("div", { class: "adapter-main" }, [
-          el("span", { class: "adapter-name", text: adapter.name }),
-          el("span", { class: "tag", text: adapter.kind === "in_process" ? "built-in" : "subprocess" }),
-          el("span", { class: "muted", text: `v${adapter.version}` }),
-        ]),
-        el("div", { class: "adapter-meta" }, [
-          el("span", {
-            class: "muted",
-            text: adapter.enabled ? `${adapter.device_count} device(s)` : "disabled",
-          }),
-          button,
-        ]),
-      ]),
+    const meta = el("div", { class: "adapter-meta" });
+    if (tokens.length > 0) meta.append(blockedChip(adapter, tokens.length, state, actions));
+    meta.append(
+      el("span", {
+        class: "muted",
+        text: adapter.enabled ? `${adapter.device_count} device(s)` : "disabled",
+      }),
+      button,
     );
+    const node = el("div", { class: `adapter ${adapter.enabled ? "" : "adapter-off"}` }, [
+      el("div", { class: "adapter-main" }, [
+        el("span", { class: "adapter-name", text: adapter.name }),
+        el("span", { class: "tag", text: adapter.kind === "in_process" ? "built-in" : "subprocess" }),
+        el("span", { class: "muted", text: `v${adapter.version}` }),
+      ]),
+      meta,
+    ]);
+    if (tokens.length > 0 && state.blockedOpen.has(adapter.id)) {
+      node.append(blockedList(adapter, tokens, actions));
+    }
+    row.append(node);
   }
   strip.append(row);
   return strip;
+}
+
+/** Small muted chip in the adapters strip; toggles the ignored-device list. */
+function blockedChip(adapter: AdapterState, count: number, state: UiState, actions: Actions): HTMLElement {
+  const open = state.blockedOpen.has(adapter.id);
+  return el("button", {
+    class: `blocked-chip ${open ? "blocked-chip-open" : ""}`,
+    type: "button",
+    "aria-expanded": open ? "true" : "false",
+    title: `${count} ignored device token(s) on ${adapter.name}`,
+    text: `${count} ignored`,
+    onclick: () => actions.toggleBlockedList(adapter.id),
+  });
+}
+
+/** The expanded list of one adapter's ignored tokens, each restorable. */
+function blockedList(adapter: AdapterState, tokens: string[], actions: Actions): HTMLElement {
+  const list = el("ul", { class: "blocked-list" });
+  for (const token of tokens) {
+    list.append(
+      el("li", { class: "blocked-row" }, [
+        el("span", { class: "blocked-token mono", text: token }),
+        el("button", {
+          class: "link-button",
+          type: "button",
+          text: "Restore",
+          title: `Talk to ${token} again.`,
+          onclick: () => actions.restoreDevice(adapter, token),
+        }),
+      ]),
+    );
+  }
+  return list;
 }
 
 function devices(state: UiState, actions: Actions): HTMLElement {
@@ -139,7 +194,16 @@ function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions):
         subtitle ? el("p", { class: "muted", text: subtitle }) : el("span", {}),
         device.serial ? el("p", { class: "mono muted", text: device.serial }) : el("span", {}),
       ]),
-      el("span", { class: "tag", text: device.adapter }),
+      el("div", { class: "card-head-side" }, [
+        el("span", { class: "tag", text: device.adapter }),
+        el("button", {
+          class: "link-button",
+          type: "button",
+          text: "Ignore",
+          title: "Stop talking to this monitor. Use this for a KVM or splitter that hangs the DDC bus.",
+          onclick: () => actions.ignoreDevice(device),
+        }),
+      ]),
     ]),
   ]);
 
@@ -158,7 +222,6 @@ function capabilityRow(
   actions: Actions,
 ): HTMLElement {
   const id = key(device.id, capability.id);
-  const busy = state.busy.has(id);
   const value = state.values.get(id);
   const readError = state.readErrors.get(id);
   const status = state.status.get(id);
@@ -176,7 +239,7 @@ function capabilityRow(
     meta.push(el("span", { class: "tag tag-warn", text: "may renegotiate the signal" }));
   }
 
-  const control = buildControl(device, capability, value, busy, actions);
+  const control = buildControl(device, capability, value, actions);
 
   const feedback = el("div", { class: "feedback" });
   if (status) {
@@ -201,10 +264,11 @@ function buildControl(
   device: DeviceDescriptor,
   capability: CapabilityDescriptor,
   value: CapabilityValue | undefined,
-  busy: boolean,
   actions: Actions,
 ): HTMLElement {
-  const disabled = busy || capability.access === "read_only";
+  // Writes are queued per device (see main.ts), so the control stays live while
+  // an earlier value is still on the bus: the newest value simply wins.
+  const disabled = capability.access === "read_only";
   switch (capability.kind.type) {
     case "int": {
       const min = capability.kind.min;

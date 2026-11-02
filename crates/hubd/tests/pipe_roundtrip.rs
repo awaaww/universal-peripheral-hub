@@ -119,6 +119,22 @@ async fn pipe_round_trip_and_device_push() -> anyhow::Result<()> {
         json!({"type": "int", "value": 41})
     );
 
+    // Blocking is adapter-specific: the mock adapter has no block list, and the
+    // error says so instead of silently doing nothing.
+    send(
+        &mut write_half,
+        &Request::call(
+            40,
+            method::DEVICE_SET_BLOCKED,
+            json!({"device": "mock:display-1", "blocked": true}),
+        ),
+    )
+    .await?;
+    let unsupported = recv(&mut lines).await?;
+    assert_eq!(unsupported["id"], json!(40));
+    assert_eq!(unsupported["error"]["code"], json!(-32000));
+    assert_eq!(unsupported["error"]["data"]["kind"], json!("unsupported"));
+
     send(
         &mut write_half,
         &Request::call(
