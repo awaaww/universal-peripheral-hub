@@ -1,0 +1,293 @@
+//! Wire protocol between `hubd` and the UI shell.
+//!
+//! Transport: one named pipe per user, UTF-8 JSON-RPC 2.0 objects separated by
+//! `\n`. `error.code` is always an integer (JSON-RPC 2.0 requires it); the
+//! machine-readable error class travels in `error.data.kind`.
+
+use hub_core::{AdapterState, CapabilityValue, DeviceDescriptor, HubError, WriteOutcome};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+pub const PROTOCOL_VERSION: u32 = 1;
+
+/// Hard limit for one request line. A client that exceeds it is disconnected
+/// rather than allowed to grow the server's memory without bound.
+pub const MAX_LINE_BYTES: usize = 1024 * 1024;
+
+/// Per-user pipe name. Includes the user name so two Windows sessions do not
+/// share a bus; the single-instance mutex remains per session.
+pub fn pipe_name() -> String {
+    pipe_name_for(&user_slug())
+}
+
+pub fn pipe_name_for(user: &str) -> String {
+    format!(r"\\.\pipe\universal-peripheral-hub-{user}")
+}
+
+fn user_slug() -> String {
+    let raw = std::env::var("USERNAME").unwrap_or_else(|_| "default".into());
+    let slug: String = raw
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if slug.is_empty() {
+        "default".into()
+    } else {
+        slug
+    }
+}
+
+pub mod method {
+    pub const HELLO: &str = "hub.hello";
+    pub const DEVICES_LIST: &str = "devices.list";
+    pub const CAPABILITY_READ: &str = "capability.read";
+    pub const CAPABILITY_WRITE: &str = "capability.write";
+    pub const ADAPTER_SET_ENABLED: &str = "adapter.set_enabled";
+    /// Notification sent by a second `hubd` instance (or by a shortcut) asking
+    /// the running instance to show the panel.
+    pub const ACTIVATE: &str = "hub.activate";
+    /// Server push: the visible device set changed.
+    pub const DEVICES_CHANGED: &str = "devices.changed";
+}
+
+pub mod codes {
+    pub const PARSE_ERROR: i64 = -32700;
+    pub const INVALID_REQUEST: i64 = -32600;
+    pub const METHOD_NOT_FOUND: i64 = -32601;
+    pub const INVALID_PARAMS: i64 = -32602;
+    pub const INTERNAL_ERROR: i64 = -32603;
+    /// Domain error; `data.kind` carries the hub error class.
+    pub const HUB_ERROR: i64 = -32000;
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Request {
+    #[serde(default = "jsonrpc_version")]
+    pub jsonrpc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    pub method: String,
+    #[serde(default)]
+    pub params: Value,
+}
+
+fn jsonrpc_version() -> String {
+    "2.0".to_string()
+}
+
+impl Request {
+    pub fn call(id: u64, method: &str, params: Value) -> Self {
+        Self {
+            jsonrpc: jsonrpc_version(),
+            id: Some(id),
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    pub fn notification(method: &str, params: Value) -> Self {
+        Self {
+            jsonrpc: jsonrpc_version(),
+            id: None,
+            method: method.to_string(),
+            params,
+        }
+    }
+
+    pub fn is_notification(&self) -> bool {
+        self.id.is_none()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Response {
+    pub jsonrpc: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<RpcError>,
+}
+
+impl Response {
+    pub fn success(id: Option<u64>, result: Value) -> Self {
+        Self {
+            jsonrpc: jsonrpc_version(),
+            id,
+            result: Some(result),
+            error: None,
+        }
+    }
+
+    pub fn failure(id: Option<u64>, error: RpcError) -> Self {
+        Self {
+            jsonrpc: jsonrpc_version(),
+            id,
+            result: None,
+            error: Some(error),
+        }
+    }
+
+    pub fn parse_error(message: impl Into<String>) -> Self {
+        Self::failure(
+            None,
+            RpcError::new(codes::PARSE_ERROR, message.into(), None),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RpcError {
+    pub code: i64,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<ErrorData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorData {
+    /// `hub_core::ErrorKind` as a snake_case string, e.g. `unknown_device`.
+    pub kind: String,
+    pub retryable: bool,
+}
+
+impl RpcError {
+    pub fn new(code: i64, message: String, data: Option<ErrorData>) -> Self {
+        Self {
+            code,
+            message,
+            data,
+        }
+    }
+
+    pub fn method_not_found(method: &str) -> Self {
+        Self::new(
+            codes::METHOD_NOT_FOUND,
+            format!("method `{method}` is not implemented by this hub"),
+            None,
+        )
+    }
+
+    pub fn invalid_params(message: impl Into<String>) -> Self {
+        Self::new(codes::INVALID_PARAMS, message.into(), None)
+    }
+}
+
+impl From<HubError> for RpcError {
+    fn from(err: HubError) -> Self {
+        Self::new(
+            codes::HUB_ERROR,
+            err.message.clone(),
+            Some(ErrorData {
+                kind: err.kind.as_str().to_string(),
+                retryable: err.kind.retryable(),
+            }),
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct HelloResult {
+    pub hub: String,
+    pub version: String,
+    pub protocol: u32,
+    pub pid: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DevicesResult {
+    pub devices: Vec<DeviceDescriptor>,
+    pub adapters: Vec<AdapterState>,
+    pub revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadParams {
+    pub device: String,
+    pub capability: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WriteParams {
+    pub device: String,
+    pub capability: String,
+    pub value: CapabilityValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SetEnabledParams {
+    pub adapter: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ReadResult {
+    pub value: CapabilityValue,
+}
+
+pub type CapabilityWriteResult = WriteOutcome;
+
+/// Notification payload for `devices.changed`.
+pub type DevicesChanged = DevicesResult;
+
+pub fn devices_changed_notification(result: &DevicesResult) -> Request {
+    Request::notification(
+        method::DEVICES_CHANGED,
+        serde_json::to_value(result).unwrap_or(Value::Null),
+    )
+}
+
+pub fn hello(params: HelloResult) -> Response {
+    Response::success(None, json!(params))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_round_trips_over_one_line() {
+        let request = Request::call(
+            7,
+            method::CAPABILITY_READ,
+            json!({"device": "a", "capability": "b"}),
+        );
+        let line = serde_json::to_string(&request).unwrap();
+        assert!(!line.contains('\n'));
+        let parsed: Request = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed, request);
+        assert!(!parsed.is_notification());
+    }
+
+    #[test]
+    fn notifications_have_no_id() {
+        let request = Request::notification(method::ACTIVATE, Value::Null);
+        assert!(request.is_notification());
+        let line = serde_json::to_string(&request).unwrap();
+        assert!(!line.contains("\"id\""));
+    }
+
+    #[test]
+    fn hub_errors_keep_an_integer_code_and_a_kind() {
+        let err: RpcError = HubError::unknown_device("nope").into();
+        assert_eq!(err.code, codes::HUB_ERROR);
+        let data = err.data.unwrap();
+        assert_eq!(data.kind, "unknown_device");
+        assert!(!data.retryable);
+    }
+
+    #[test]
+    fn pipe_name_is_per_user_and_sanitised() {
+        assert_eq!(
+            pipe_name_for("alice"),
+            r"\\.\pipe\universal-peripheral-hub-alice"
+        );
+    }
+}

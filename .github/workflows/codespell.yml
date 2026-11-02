@@ -1,0 +1,20 @@
+name: Spelling
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  codespell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: codespell-project/actions-codespell@v2
+        with:
+          skip: "./target,./ui/node_modules,./ui/dist,./.git,*.lock,*.ico"
+          ignore_words_list: "crate,ser,cas,ba,ot,upto"
+          check_filenames: true

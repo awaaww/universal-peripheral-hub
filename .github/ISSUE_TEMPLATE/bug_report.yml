@@ -1,0 +1,46 @@
+name: Bug report
+description: Something in the hub does not work the way it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please do not paste full device dumps or logs
+        from vendor software — the parts that matter are the hub's version, the
+        device model, and the exact error text.
+  - type: input
+    id: version
+    attributes:
+      label: Hub version
+      description: Output of `hubd --version`, or the release tag.
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 24H2 (26100.2033)"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device
+      description: Vendor and model, plus how it is connected (HDMI, USB, ...).
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you saw, what you expected.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant log lines
+      description: Run `hubd` from a terminal with `RUST_LOG=debug` if you can.
+      render: text
+    validations:
+      required: false

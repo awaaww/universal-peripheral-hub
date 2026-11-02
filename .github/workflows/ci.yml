@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test, build)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ci-rust
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --exclude universal-peripheral-hub --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace --exclude universal-peripheral-hub
+
+      - name: Selftest
+        run: cargo run -p hubd -- --selftest
+
+      - name: Build
+        run: cargo build --release --workspace --exclude universal-peripheral-hub
+
+  ui:
+    name: UI (typecheck, build)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run build
+
+      # The Tauri crate is checked here rather than in the Rust job, because it
+      # needs the built frontend (frontendDist) and pulls the WebView2 stack.
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ui/src-tauri -> ../../target
+          shared-key: ci-tauri
+
+      - name: Check Tauri shell
+        working-directory: .
+        run: cargo check -p universal-peripheral-hub
+
+      # Production builds must embed ui/dist; without `custom-protocol` the
+      # shell proxies to the Vite dev server at runtime.
+      - name: Build Tauri shell (embedded assets)
+        working-directory: .
+        run: cargo build --release -p universal-peripheral-hub --features custom-protocol

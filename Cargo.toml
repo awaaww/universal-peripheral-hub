@@ -1,0 +1,51 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/hub-core",
+    "crates/hub-proto",
+    "crates/hubd",
+    "adapters/mock",
+    "ui/src-tauri",
+]
+# The UI shell needs the frontend bundle and the full Tauri toolchain, so it is
+# excluded from default builds and from `cargo test` at the workspace root.
+default-members = [
+    "crates/hub-core",
+    "crates/hub-proto",
+    "crates/hubd",
+    "adapters/mock",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/OWNER/universal-peripheral-hub"
+authors = ["Universal Peripheral Hub contributors"]
+
+[workspace.dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tokio = { version = "1.40", features = [
+    "rt-multi-thread",
+    "macros",
+    "sync",
+    "time",
+    "net",
+    "io-util",
+] }
+windows-sys = { version = "0.52", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_RemoteDesktop",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+] }

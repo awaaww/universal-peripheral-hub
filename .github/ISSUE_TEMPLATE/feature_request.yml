@@ -1,0 +1,46 @@
+name: Feature request
+description: A device, a capability or a behaviour the hub does not have yet
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The roadmap is milestone-based (M0 skeleton → M1 DDC/CI → M2 scenes →
+        M3 input → …). Requests that fit the current milestone are much more
+        likely to be picked up; requests for a specific vendor's proprietary
+        protocol need a protocol description, not a screenshot of its UI.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Display (DDC/CI)
+        - Keyboard / mouse (HID)
+        - Audio
+        - Scenes / automation
+        - Panel UI
+        - Packaging / startup
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device or software
+      description: Which device, and which vendor utility it replaces.
+    validations:
+      required: false
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What you cannot do today, and what you do instead.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you would like
+      description: A capability name, a scene rule, a UI idea — anything concrete.
+    validations:
+      required: false

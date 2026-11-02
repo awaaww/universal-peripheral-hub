@@ -1,0 +1,13 @@
+[package]
+name = "hub-proto"
+description = "JSON-RPC 2.0 wire types shared by hubd and the UI shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hub-core = { path = "../hub-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }

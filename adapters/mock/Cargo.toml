@@ -1,0 +1,11 @@
+[package]
+name = "adapter-mock"
+description = "In-process mock adapter with two fake devices, for development and tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+hub-core = { path = "../../crates/hub-core" }

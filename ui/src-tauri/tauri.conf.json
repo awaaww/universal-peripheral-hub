@@ -1,0 +1,35 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Universal Peripheral Hub",
+  "version": "0.1.0",
+  "identifier": "io.github.universalperipheralhub.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Universal Peripheral Hub",
+        "width": 1024,
+        "height": 760,
+        "minWidth": 720,
+        "minHeight": 560,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico", "icons/32x32.png", "icons/128x128.png", "icons/icon.png"],
+    "shortDescription": "One hub for every peripheral",
+    "longDescription": "Universal Peripheral Hub replaces vendor utilities with a single extensible process: displays, keyboards, mice, headsets and controllers are described by adapters and driven through capability descriptors."
+  }
+}

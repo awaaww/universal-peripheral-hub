@@ -1,0 +1,30 @@
+[package]
+name = "universal-peripheral-hub"
+description = "Desktop shell (WebView2) for Universal Peripheral Hub"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "universal-peripheral-hub"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+hub-proto = { path = "../../crates/hub-proto" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { version = "2", features = [] }
+tauri-plugin-single-instance = "2"
+tokio = { workspace = true }
+
+# `tauri` proxies to `devUrl` unless its `custom-protocol` feature is on, so a
+# plain `cargo build --release` would produce a binary that expects the Vite dev
+# server. Enable this feature for shippable builds:
+#   cargo build --release -p universal-peripheral-hub --features custom-protocol
+[features]
+custom-protocol = ["tauri/custom-protocol"]

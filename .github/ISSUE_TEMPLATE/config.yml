@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report
+    url: https://github.com/universal-peripheral-hub/universal-peripheral-hub/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue.
+  - name: Contributing guide
+    url: https://github.com/universal-peripheral-hub/universal-peripheral-hub/blob/main/CONTRIBUTING.md
+    about: Build instructions, coding rules and how to add an adapter.

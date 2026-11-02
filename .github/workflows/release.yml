@@ -1,0 +1,53 @@
+name: Release
+
+# Skeleton only. M0 produces unsigned, unpackaged binaries as workflow
+# artifacts. Installer packaging, signing and the update channel land in M6;
+# until then this workflow must not claim to produce a supported release.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build panel frontend
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build binaries
+        run: |
+          cargo build --release -p hubd
+          cargo build --release -p universal-peripheral-hub --features custom-protocol
+
+      - name: Collect artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/hubd.exe dist/
+          Copy-Item target/release/universal-peripheral-hub.exe dist/
+          Compress-Archive -Path dist/* -DestinationPath universal-peripheral-hub-${{ github.ref_name }}-x64-unsigned.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: universal-peripheral-hub-${{ github.ref_name }}-x64-unsigned
+          path: universal-peripheral-hub-*.zip
+
+      # Deliberately no `gh release create` yet: an unsigned, unpackaged zip is
+      # not something a user should be told to install.
