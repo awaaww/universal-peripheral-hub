@@ -82,6 +82,17 @@ impl<T: Transport> Core<T> {
         }
     }
 
+    /// The transport behind the adapter. Trace replay reads it to report how
+    /// many recorded steps the run consumed.
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    /// Give the transport back so a recording can be flushed and inspected.
+    pub fn into_transport(self) -> T {
+        self.transport
+    }
+
     /// Enumerate, observing whether ATK HUB is running right now.
     pub fn enumerate(&mut self) -> Result<Vec<DeviceDescriptor>> {
         let atk_hub_running = hid::process_running(ATK_HUB_EXE);

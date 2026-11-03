@@ -7,6 +7,7 @@
 mod adapter;
 mod hid;
 mod protocol;
+mod replay;
 
 use std::io::{BufRead, Read, Write};
 
@@ -24,12 +25,27 @@ use crate::adapter::AtkAdapter;
 fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    match args.first().map(String::as_str) {
         None => serve(),
-        Some("--probe") => probe(),
-        Some(other) => {
-            anyhow::bail!("unexpected argument `{other}` (usage: atk-adapter [--probe])")
+        Some("--probe") => match flag("--record") {
+            Some(path) => probe_recorded(std::path::Path::new(&path)),
+            None => probe(),
+        },
+        Some("--replay") => {
+            let path = flag("--replay")
+                .ok_or_else(|| anyhow::anyhow!("--replay needs a trace path"))?;
+            replay(std::path::Path::new(&path))
         }
+        Some(other) => anyhow::bail!(
+            "unexpected argument `{other}` (usage: atk-adapter [--probe [--record TRACE]] [--replay TRACE])"
+        ),
     }
 }
 
@@ -327,6 +343,52 @@ fn probe() -> anyhow::Result<()> {
             }
         }
     }
+    Ok(())
+}
+
+/// `--probe --record <path>`: run the discovery the panel would run, but keep
+/// every frame so the same exchange can be replayed on a machine without the
+/// mouse.
+fn probe_recorded(path: &std::path::Path) -> anyhow::Result<()> {
+    let mut core = adapter::Core::new(replay::RecordingHid::new(
+        hub_trace::TraceWriter::new("atk").with_path(path),
+    ));
+    let devices = core.enumerate_with(false)?;
+    for device in &devices {
+        for capability in &device.capabilities {
+            if capability.access.can_read() {
+                // Read failures are part of the trace too; ignore them here and
+                // let the replay test decide what the recording proves.
+                let _ = core.read(&device.id, &capability.id);
+            }
+        }
+    }
+    let trace = core.into_transport().finish()?;
+    println!(
+        "recorded {} step(s) for {} device(s) -> {}",
+        trace.steps.len(),
+        trace.devices.len(),
+        path.display()
+    );
+    Ok(())
+}
+
+/// `--replay <path>`: drive the same adapter logic against a recorded trace and
+/// print what it decoded. No hardware is opened.
+fn replay(path: &std::path::Path) -> anyhow::Result<()> {
+    let mut core = adapter::Core::new(replay::ReplayHid::from_path(path)?);
+    let devices = core.enumerate_with(false)?;
+    println!("replayed {}", path.display());
+    for device in &devices {
+        println!("device {}", device.id);
+        for capability in &device.capabilities {
+            match core.read(&device.id, &capability.id) {
+                Ok(value) => println!("  {} => {}", capability.id, value_summary(&value)),
+                Err(error) => println!("  {} => error: {error}", capability.id),
+            }
+        }
+    }
+    println!("steps left: {}", core.transport().remaining());
     Ok(())
 }
 

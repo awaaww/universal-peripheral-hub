@@ -15,6 +15,7 @@ path = "src/main.rs"
 [dependencies]
 hub-core = { path = "../../crates/hub-core" }
 hub-proto = { path = "../../crates/hub-proto" }
+hub-trace = { path = "../../crates/hub-trace" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

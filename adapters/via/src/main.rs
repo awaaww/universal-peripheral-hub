@@ -7,6 +7,7 @@
 mod adapter;
 mod hid;
 mod protocol;
+mod replay;
 
 use std::io::{BufRead, Read, Write};
 
@@ -24,13 +25,28 @@ use crate::adapter::ViaAdapter;
 fn main() -> anyhow::Result<()> {
     init_tracing();
 
-    match std::env::args().nth(1).as_deref() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let flag = |name: &str| -> Option<String> {
+        args.iter()
+            .position(|arg| arg == name)
+            .and_then(|index| args.get(index + 1))
+            .cloned()
+    };
+    match args.first().map(String::as_str) {
         None => serve(),
-        Some("--probe") => probe(),
+        Some("--probe") => match flag("--record") {
+            Some(path) => probe_recorded(std::path::Path::new(&path)),
+            None => probe(),
+        },
+        Some("--replay") => {
+            let path =
+                flag("--replay").ok_or_else(|| anyhow::anyhow!("--replay needs a trace path"))?;
+            replay(std::path::Path::new(&path))
+        }
         Some("--write-selftest") => write_selftest(),
         Some(other) => {
             anyhow::bail!(
-                "unexpected argument `{other}` (usage: via-adapter [--probe|--write-selftest])"
+                "unexpected argument `{other}` (usage: via-adapter [--probe [--record TRACE]] [--replay TRACE] [--write-selftest])"
             )
         }
     }
@@ -279,6 +295,55 @@ fn emit(out: &mut impl Write, response: &RpcResponse) -> anyhow::Result<()> {
 // ---------------------------------------------------------------------------
 // --probe: the demo path, no host process required
 // ---------------------------------------------------------------------------
+
+/// `--probe --record <path>`: run discovery and keep every frame so the same
+/// exchange can be replayed without the keyboard.
+fn probe_recorded(path: &std::path::Path) -> anyhow::Result<()> {
+    let mut core = adapter::Core::new(replay::RecordingHid::new(
+        hub_trace::TraceWriter::new("via").with_path(path),
+    ));
+    let devices = core.enumerate()?;
+    for device in &devices {
+        for capability in &device.capabilities {
+            if capability.access.can_read() {
+                let _ = core.read(&device.id, &capability.id);
+            }
+        }
+    }
+    let trace = core.into_transport().finish()?;
+    println!(
+        "recorded {} step(s) for {} device(s) -> {}",
+        trace.steps.len(),
+        trace.devices.len(),
+        path.display()
+    );
+    Ok(())
+}
+
+/// `--replay <path>`: drive the adapter against a recorded trace and print what
+/// it decoded. No hardware is opened.
+fn replay(path: &std::path::Path) -> anyhow::Result<()> {
+    let mut core = adapter::Core::new(replay::ReplayHid::from_path(path)?);
+    let devices = core.enumerate()?;
+    if std::env::args().any(|arg| arg == "--json") {
+        // Descriptor goldens live next to the trace; `--json` is how they are
+        // regenerated after an intentional change.
+        println!("{}", serde_json::to_string_pretty(&devices)?);
+        return Ok(());
+    }
+    println!("replayed {}", path.display());
+    for device in &devices {
+        println!("device {}", device.id);
+        for capability in &device.capabilities {
+            match core.read(&device.id, &capability.id) {
+                Ok(value) => println!("  {} => {}", capability.id, value_summary(&value)),
+                Err(error) => println!("  {} => error: {error}", capability.id),
+            }
+        }
+    }
+    println!("steps left: {}", core.transport().remaining());
+    Ok(())
+}
 
 fn probe() -> anyhow::Result<()> {
     let mut adapter = ViaAdapter::new();

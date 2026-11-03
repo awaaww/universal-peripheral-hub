@@ -40,7 +40,7 @@ descriptors rather than hard-coded per vendor.
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
 | M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read + keymap editing; headset not) |
 | M4 | Full panel UI | **done** (device detail pages, undo, Ctrl+Alt+M, diagnostics, confirmations, retry, keyboard navigation) |
-| M5 | Session recording / replay | not implemented |
+| M5 | Adapter trace record / replay | **partial** (adapters only; no user-side macro recording) |
 | M6 | Packaging, auto-start, signing | **partial** (unsigned per-user NSIS installer, auto-start) |
 | M7 | Public release | not implemented |
 

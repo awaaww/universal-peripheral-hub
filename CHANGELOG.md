@@ -4,6 +4,30 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.0 — adapter trace record and replay
+
+### Added
+
+- `hub-trace`: a small, versioned format for HID exchanges (devices plus an
+  ordered list of open/send/recv steps) with strict-order replay.
+- `atk-adapter --probe --record <trace>` and `via-adapter --probe --record <trace>`
+  capture everything the adapter sent and received.
+- `--replay <trace>` boots the adapter against the recording instead of hardware;
+  `via-adapter --replay <trace> --json` dumps the descriptor list for goldens.
+- Checked-in recordings: `adapters/via/tests/traces/via-rs7-air.json` (real
+  keyboard) and `adapters/via/tests/traces/via-rs7-air.descriptors.json`
+  (descriptor golden), plus `adapters/atk/tests/traces/atk-mouse-8k.json`
+  (a real capture of the mouse's wireless link asleep — replay must report no
+  device instead of inventing one).
+- Replay tests assert the decoded values, that the whole recording is consumed,
+  and that the descriptor list still matches the golden.
+
+### Notes
+
+- Recording never runs in CI; the traces are ordinary files.
+- The ATK recording is a *silent bus* capture. A success capture needs the
+  wireless mouse to be physically moved during `--probe --record`.
+
 ## 0.5.1 — window fit and a banner that goes away
 
 ### Fixed

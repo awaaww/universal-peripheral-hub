@@ -89,6 +89,17 @@ impl<T: Transport> Core<T> {
         }
     }
 
+    /// The transport behind the adapter. Replay reads it to report how many
+    /// recorded steps the run consumed.
+    pub fn transport(&self) -> &T {
+        &self.transport
+    }
+
+    /// Give the transport back so a recording can be flushed and inspected.
+    pub fn into_transport(self) -> T {
+        self.transport
+    }
+
     /// Enumerate collections and probe each one for the VIA capability set.
     ///
     /// A collection that does not answer, or leaves a query unanswered, is not

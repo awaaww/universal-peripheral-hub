@@ -133,3 +133,27 @@ Two lessons worth keeping:
   building run against `FakeTransport` in unit tests.
 * Anything expensive (the capabilities string costs ~1.1 s) is read once per
   device and cached for the adapter's lifetime; enumeration must stay fast.
+
+### Record a trace, then replay it without the hardware
+
+Every adapter with a `Transport` seam can record its own exchanges. Point it at a
+file while probing:
+
+```powershell
+cargo run -q -p adapter-via -- --probe --record adapters/via/tests/traces/via-rs7-air.json
+cargo run -q -p adapter-via -- --replay adapters/via/tests/traces/via-rs7-air.json
+```
+
+Replay answers from the file in strict order, so an adapter that changes a byte or
+a query order fails the test instead of silently drifting. Commit the trace with
+the adapter, and regenerate the descriptor golden after an intentional descriptor
+change:
+
+```powershell
+cargo run -q -p adapter-via -- --replay adapters/via/tests/traces/via-rs7-air.json --json `
+  > adapters/via/tests/traces/via-rs7-air.descriptors.json
+```
+
+If the device was asleep while recording, the trace is still valid: replay proves
+the adapter reports nothing rather than inventing a device. Re-record when the
+device is awake to get a success capture.

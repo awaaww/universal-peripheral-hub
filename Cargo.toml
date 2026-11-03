@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/hub-core",
+    "crates/hub-trace",
     "crates/hub-proto",
     "crates/hubd",
     "adapters/mock",
@@ -23,7 +24,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.5.1"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"

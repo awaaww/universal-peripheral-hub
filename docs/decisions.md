@@ -455,3 +455,23 @@ run. That keeps the pipe response small and avoids writing failure details to
 disk, which users share in bug reports far more often than they intend. The
 adapter rows deliberately reuse `AdapterState`, so an adapter that is disabled
 or latched off shows up the same way it does in the panel's adapter strip.
+
+## D37 — traces are recorded bytes, not synthetic fixtures
+
+Adapter behaviour is regression-tested by recording what the adapter actually sent
+and received on the real device, then replaying it. `hub-trace` stores the device
+list plus an ordered `open`/`send`/`recv` step list as hex in a versioned JSON
+file; replay is *strict order*: a send that differs from the recording is a
+failure, a read with nothing recorded is a failure, and leftover steps are a
+failure.
+
+Consequences:
+
+- Recordings are ordinary files under `adapters/<name>/tests/traces/`; tests never
+  need the hardware and CI never records.
+- A recording of a silent or asleep device is still a valid trace. It asserts the
+  adapter reports nothing rather than inventing a device — that is the ATK mouse
+  capture we currently have. When the wireless link is awake, re-record over the
+  same path to turn it into a success capture.
+- Descriptor lists are golden files too: `--replay <trace> --json` regenerates
+  them after an intentional change, and the replay test diffs them byte for byte.

@@ -1,0 +1,115 @@
+[
+  {
+    "id": "via:0000001a0795f68e",
+    "adapter": "via",
+    "name": "ATK RS7 Air (VIA)",
+    "vendor": "ATK",
+    "model": "RS7 Air",
+    "serial": "0000001a0795f68e",
+    "capabilities": [
+      {
+        "id": "keyboard.protocol",
+        "cap_type": "keyboard.protocol",
+        "label": "Protocol version",
+        "kind": {
+          "type": "int",
+          "min": 1,
+          "max": 16,
+          "step": 1
+        },
+        "access": "read_only",
+        "cost": {
+          "latency_ms": 120,
+          "side_effects": []
+        },
+        "traits": {
+          "live": true,
+          "sceneable": true,
+          "bindable": false
+        }
+      },
+      {
+        "id": "keyboard.layers",
+        "cap_type": "keyboard.layers",
+        "label": "Keymap layers",
+        "kind": {
+          "type": "int",
+          "min": 1,
+          "max": 32,
+          "step": 1
+        },
+        "access": "read_only",
+        "cost": {
+          "latency_ms": 120,
+          "side_effects": []
+        },
+        "traits": {
+          "live": true,
+          "sceneable": true,
+          "bindable": false
+        }
+      },
+      {
+        "id": "keyboard.keys",
+        "cap_type": "keyboard.keys",
+        "label": "Keys in the keymap",
+        "kind": {
+          "type": "int",
+          "min": 1,
+          "max": 256,
+          "step": 1
+        },
+        "access": "read_only",
+        "cost": {
+          "latency_ms": 0,
+          "side_effects": []
+        },
+        "traits": {
+          "live": true,
+          "sceneable": true,
+          "bindable": false
+        }
+      },
+      {
+        "id": "keyboard.macros",
+        "cap_type": "keyboard.macros",
+        "label": "Macros",
+        "kind": {
+          "type": "int",
+          "min": 0,
+          "max": 64,
+          "step": 1
+        },
+        "access": "read_only",
+        "cost": {
+          "latency_ms": 120,
+          "side_effects": []
+        },
+        "traits": {
+          "live": true,
+          "sceneable": true,
+          "bindable": false
+        }
+      },
+      {
+        "id": "keyboard.keymap",
+        "cap_type": "keyboard.keymap",
+        "label": "Keymap (layers x keys)",
+        "kind": {
+          "type": "bytes",
+          "max_len": 768
+        },
+        "access": "read_write",
+        "cost": {
+          "latency_ms": 220,
+          "side_effects": []
+        },
+        "traits": {
+          "live": true,
+          "sceneable": true,
+          "bindable": false
+        }
+      }
+    ]
+  }
+]
