@@ -87,6 +87,8 @@ data/scenes.example.json  documented example scene document
 
 ## Install
 
+**[Download the latest release](https://github.com/awaaww/universal-peripheral-hub/releases/latest)** — a per-user installer, no administrator rights required.
+
 The per-user installer from the release page
 (`Universal Peripheral Hub_*_x64-setup.exe`) needs no elevation: it unpacks the
 core and the adapters into `%LOCALAPPDATA%\Universal Peripheral Hub\`, registers
