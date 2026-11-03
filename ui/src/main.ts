@@ -48,8 +48,19 @@ const state: UiState = {
   undoNote: null,
 };
 
-function call<T>(method: string, params: unknown): Promise<T> {
-  return invoke<T>("hub_request", { method, params });
+async function call<T>(method: string, params: unknown): Promise<T> {
+  try {
+    const result = await invoke<T>("hub_request", { method, params });
+    // A successful request means the pipe is healthy again: the banner from a
+    // slow core start must not outlive the failure it describes.
+    if (state.error) {
+      state.error = null;
+      paint();
+    }
+    return result;
+  } catch (err) {
+    throw err;
+  }
 }
 
 /**
@@ -114,7 +125,8 @@ function applySnapshot(snapshot: Snapshot): void {
   state.snapshot = snapshot;
   state.online = true;
   state.error = null;
-  state.version = null;
+  // `state.version` is not part of a device snapshot: clearing it here made the
+  // footer forget the handshake version every time the core pushed an update.
   // The open detail page cannot outlive its device.
   if (state.detailDeviceId && !snapshot.devices.some((device) => device.id === state.detailDeviceId)) {
     state.detailDeviceId = null;
@@ -161,9 +173,19 @@ async function refresh(): Promise<void> {
   // The scenes section is independent of the device snapshot; start its read
   // alongside `devices.list` so it does not wait behind every capability read.
   void loadScenes();
+  // `applySnapshot` clears `state.version`; ask the shell for the handshake
+  // version before the snapshot so the footer names the running core.
+  let hubVersion: string | null = null;
+  try {
+    const status = await invoke<{ version?: string | null }>("hub_status");
+    hubVersion = status.version ?? null;
+  } catch {
+    // The footer keeps its previous label; the snapshot still loads.
+  }
   try {
     const snapshot = await call<Snapshot>("devices.list", null);
     applySnapshot(snapshot);
+    if (hubVersion) state.version = hubVersion;
     await loadValues(snapshot.devices);
   } catch (err) {
     state.online = false;
@@ -736,3 +758,27 @@ window.addEventListener("unhandledrejection", (event) => {
 
 void loadPrefs();
 void refresh();
+
+// The shell spawns `hubd` in the background, so the first refresh can run
+// before the handshake has a version to report. Poll briefly until the core
+// answers, then stop: the footer should not keep a timer alive forever.
+let versionProbes = 0;
+const versionTimer = window.setInterval(() => {
+  versionProbes += 1;
+  void (async () => {
+    try {
+      const status = await invoke<{ version?: string | null }>("hub_status");
+      if (status.version) {
+        if (status.version !== state.version) {
+          state.version = status.version;
+          paint();
+        }
+        window.clearInterval(versionTimer);
+        return;
+      }
+    } catch {
+      // The core may still be starting; try again on the next tick.
+    }
+    if (versionProbes >= 8) window.clearInterval(versionTimer);
+  })();
+}, 1000);

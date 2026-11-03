@@ -84,7 +84,6 @@ const en = {
     "Ignore “{name}”?\n\nStop talking to this monitor. Use this for a KVM or splitter that hangs the DDC bus.\n\nYou can restore it later from the adapters strip.",
 
   "footer.note": "Device cards are generated from adapter capability descriptors.",
-  "footer.milestone": "M0 · mock adapter",
 
   "keymap.layer": "Layer {layer}",
   "keymap.layers": "{layers} layers · {keys} keys per layer",
@@ -278,7 +277,6 @@ const zhCN: Record<Key, string> = {
     "忽略“{name}”吗？\n\n停止与该显示器通信。适用于会卡住 DDC 总线的 KVM 或分配器。\n\n之后可在适配器一栏中恢复。",
 
   "footer.note": "设备卡片由适配器能力描述生成。",
-  "footer.milestone": "M0 · 模拟适配器",
 
   "keymap.layer": "第 {layer} 层",
   "keymap.layers": "{layers} 层 · 每层 {keys} 键",
@@ -469,7 +467,6 @@ const zhTW: Record<Key, string> = {
     "忽略「{name}」嗎？\n\n停止與此顯示器通訊。適用於會卡住 DDC 匯流排的 KVM 或切換器。\n\n之後可在轉接器一欄中恢復。",
 
   "footer.note": "裝置卡片由轉接器能力描述產生。",
-  "footer.milestone": "M0 · 模擬轉接器",
 
   "keymap.layer": "第 {layer} 層",
   "keymap.layers": "{layers} 層 · 每層 {keys} 鍵",

@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.1 — window fit and a banner that goes away
+
+### Fixed
+
+- The panel now clamps itself to the monitor and re-centres at startup, so a
+  1024×760 window on a 1366×768 laptop (or any 125–175 % display) no longer
+  leaves the right-hand controls off-screen.
+- A slow core start could leave "cannot open \.\pipe\…" on screen after the
+  pipe was already up. Any successful request now clears that banner, because a
+  message about a failure must not outlive the failure.
+
 ## 0.5.0 — device pages, undo and diagnostics
 
 ### Added

@@ -228,6 +228,11 @@ fn run_connection(
                 return;
             }
         };
+        if let Some(version) = hello.get("version").and_then(Value::as_str) {
+            if let Ok(mut slot) = HUB_VERSION.lock() {
+                *slot = Some(version.to_owned());
+            }
+        }
         let protocol = hello.get("protocol").and_then(Value::as_u64).unwrap_or(0);
         if protocol != u64::from(hub_proto::PROTOCOL_VERSION) {
             let _ = ready.send(Err(HubFailure::new(format!(
@@ -451,10 +456,17 @@ pub async fn hub_request(method: String, params: Value) -> Result<Value, HubFail
     .map_err(|err| HubFailure::new(format!("worker task failed: {err}")))?
 }
 
+/// Version reported by the core in its handshake. `hub_status` exposes it so the
+/// footer can name the build that is actually running instead of a hard-coded
+/// milestone string that goes stale.
+static HUB_VERSION: Mutex<Option<String>> = Mutex::new(None);
+
 #[tauri::command]
 pub fn hub_status() -> Value {
+    let version = HUB_VERSION.lock().ok().and_then(|slot| slot.clone());
     serde_json::json!({
         "connected": current().is_some(),
         "protocol": hub_proto::PROTOCOL_VERSION,
+        "version": version,
     })
 }

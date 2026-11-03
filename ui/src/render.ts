@@ -104,7 +104,7 @@ export function render(root: HTMLElement, state: UiState, actions: Actions): voi
     if (state.scenes && !state.scenesUnsupported) root.append(scenes(state.scenes, state, actions));
     root.append(devices(state, actions));
   }
-  root.append(footer());
+  root.append(footer(state));
 }
 
 function header(state: UiState, actions: Actions): HTMLElement {
@@ -900,9 +900,16 @@ function buildControl(
   }
 }
 
-function footer(): HTMLElement {
+function footer(state: UiState): HTMLElement {
+  // The version comes from the running core, not from a hand-edited string:
+  // the footer said "M0 · mock adapter" long after the mock stopped being the
+  // only adapter in the build.
   return el("footer", { class: "footer" }, [
     el("span", { text: t("footer.note") }),
-    el("span", { class: "mono", text: t("footer.milestone") }),
+    el("span", {
+      class: "mono",
+      "data-hub-version": state.version ?? "",
+      text: state.version ? `hubd ${state.version}` : "hubd",
+    }),
   ]);
 }
