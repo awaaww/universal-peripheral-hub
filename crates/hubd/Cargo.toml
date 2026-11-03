@@ -27,7 +27,7 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 windows-sys = { workspace = true }
-winreg = "0.52"
+winreg = "0.56"
 
 [dev-dependencies]
 tokio = { workspace = true }
