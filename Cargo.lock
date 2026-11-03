@@ -36,6 +36,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "adapter-via"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hub-core",
+ "hub-proto",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+ "windows-sys 0.52.0",
+]
+
+[[package]]
 name = "adler2"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

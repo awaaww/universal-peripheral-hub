@@ -9,17 +9,20 @@ rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
 > **Status: M3 (partial).** Panel, resident core, DDC/CI adapter, scene engine
-> and an out-of-process ATK adapter are implemented. The ATK adapter enumerates
-> the ATK wireless mouse and reads battery, charging state, wireless link,
-> firmware version, report rate and the active DPI slot. Report rate and the
-> DPI slot are writable; numeric DPI is not advertised because the firmware
-> does not expose the per-slot values. Nothing else is written yet.
-> The ATK keyboard speaks VIA/QMK and the headset uses a separate channel: both are visible as *not implemented* rather than faked. ATK HUB does
-> not have to be closed: reads returned real values while it was running in our
-> tests. If the control collection goes silent (the vendor tool holding it, or
-> an idle wireless mouse), the panel says so and `Rescan` rebuilds the adapter;
-> moving the mouse once is usually enough. HID writes, auto-start and installers
-> are not implemented yet — see the roadmap.
+> and two out-of-process ATK adapters are implemented. The mouse adapter
+> (`adapters/atk`) reads battery, charging state, wireless link, firmware
+> version, report rate and the active DPI slot; report rate and the DPI slot are
+> writable. Numeric DPI is not advertised because the firmware does not expose
+> the per-slot values. The keyboard adapter (`adapters/via`) speaks VIA/QMK and
+> reports the protocol version, keymap layer count, key count (96 on the RS7 Air)
+> and macro count; it is read-only in this milestone, and keymap or lighting
+> writes are not implemented. The headset uses a separate channel (USB audio plus
+> a serial port) and is *not implemented* rather than faked.
+> ATK HUB does not have to be closed: reads returned real values while it was
+> running in our tests. If the mouse control collection goes silent (the vendor
+> tool holding it, or an idle wireless mouse), the panel says so and `Rescan`
+> rebuilds the adapters; moving the mouse once is usually enough. Auto-start and
+> installers are not implemented yet — see the roadmap.
 
 ## Status / roadmap
 
@@ -28,7 +31,7 @@ descriptors rather than hard-coded per vendor.
 | M0 | Tauri shell, `hubd`, adapter host, mock adapter, RPC, CI | **done** |
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
-| M3 | First HID adapter (ATK mouse) | **partial** (mouse read/write; keyboard/headset not) |
+| M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read-only; headset not) |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
 | M5 | Session recording / replay | not implemented |
 | M6 | Packaging, auto-start, signing | not implemented |
@@ -100,6 +103,16 @@ cargo run -p hubd -- --selftest
 
 It loads the mock adapter, prints the two device descriptors as JSON, unloads and
 reloads the adapter, and exits with code 0.
+
+The real HID adapters have their own smoke test, which enumerates the helper and
+prints every live capability value:
+
+```powershell
+cargo run -p hubd -- --selftest --adapter atk    # ATK wireless mouse
+cargo run -p hubd -- --selftest --adapter via    # ATK RS7 Air keyboard (VIA/QMK)
+```
+
+Both exit non-zero when the helper binary is missing or no device answers.
 
 Configuration lives in `%APPDATA%\UniversalPeripheralHub\settings.json`. Writes
 are atomic; an unparsable file is preserved as `settings.json.corrupt-<timestamp>`

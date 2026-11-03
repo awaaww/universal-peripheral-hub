@@ -309,3 +309,15 @@ writes the block back with opcode `0x07`, waits 150 ms for the dongle to commit,
 then reads it back and fails `transient` on any mismatch. This is the same
 sequence the vendor app performs; the hub also re-reads after every write, so a
 silent failure surfaces in the panel instead of looking applied.
+
+## D29 — VIA keymaps are read through the raw HID buffer, not per-key
+
+The RS7 Air answers `0x12` (dynamic keymap buffer) with big-endian 16-bit
+keycodes, but the per-key `0x04` command returns junk and the lighting `0x08`
+command returns `0xFF`. Enumeration therefore derives the keyboard size from the
+buffer itself: 32-byte pages are scanned until an empty page that still has the
+verified 768-byte window after it (the board's last page is `KC_NO`, so a strict
+"first empty page stops the scan" rule reports 92 keys), then
+`keys = bytes / 2 / layers`. The adapter advertises only values it can actually
+decode — protocol version, layers, keys, macros — and `write()` returns
+`unsupported` instead of offering a control the firmware cannot honour.

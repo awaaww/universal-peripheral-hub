@@ -37,10 +37,23 @@ fn main() -> ExitCode {
     if args.iter().any(|arg| arg == "--selftest") {
         let outcome = match adapter.as_deref() {
             None | Some("mock") => hubd::selftest::run(),
-            Some("atk") => selftest_atk(),
+            Some("atk") => selftest_proc(
+                "atk",
+                "ATK (HID)",
+                hubd::service::find_atk_adapter(),
+                "UPH_ATK_ADAPTER",
+                "adapters/atk",
+            ),
+            Some("via") => selftest_proc(
+                "via",
+                "ATK RS7 Air (VIA)",
+                hubd::service::find_via_adapter(),
+                "UPH_VIA_ADAPTER",
+                "adapters/via",
+            ),
             Some(other) => {
                 eprintln!(
-                    "hubd: unknown --adapter `{other}`; --selftest supports `mock` and `atk`"
+                    "hubd: unknown --adapter `{other}`; --selftest supports `mock`, `atk` and `via`"
                 );
                 return ExitCode::FAILURE;
             }
@@ -77,28 +90,37 @@ fn main() -> ExitCode {
     }
 }
 
-/// `hubd --selftest --adapter atk`: exercise the real out-of-process path
+/// `hubd --selftest --adapter <id>`: exercise the real out-of-process path
 /// through the same [`Hub`] the resident process uses.
 ///
 /// The hub registers the mock adapter too, so the run also proves the two can
 /// coexist. Anything short of a spawnable helper that enumerates at least one
 /// device is a failure: this mode exists to gate the helper, and a silent skip
 /// would turn a broken build into a green check.
-fn selftest_atk() -> Result<()> {
-    let binary = hubd::service::find_atk_adapter().context(
-        "adapter `atk`: no atk-adapter.exe found; set UPH_ATK_ADAPTER or build adapters/atk",
-    )?;
+fn selftest_proc(
+    id: &str,
+    name: &str,
+    binary: Option<std::path::PathBuf>,
+    env_var: &str,
+    adapter_dir: &str,
+) -> Result<()> {
+    let binary = binary.with_context(|| {
+        format!("adapter `{id}`: no helper found; set {env_var} or build {adapter_dir}")
+    })?;
 
-    let info = proc::adapter_info();
+    let info = proc::adapter_info_with(id, name);
     let mut hub = Hub::new();
     hub.register(adapter_mock::adapter_info(), adapter_mock::factory())
         .context("registering the mock adapter")?;
-    hub.register(info.clone(), proc::factory(binary.clone()))
-        .context("registering the ATK adapter")?;
+    hub.register(
+        info.clone(),
+        proc::factory_for(info.clone(), binary.clone()),
+    )
+    .with_context(|| format!("registering the {id} adapter"))?;
     hub.load("mock").context("loading the mock adapter")?;
-    hub.load("atk").with_context(|| {
+    hub.load(id).with_context(|| {
         format!(
-            "adapter `atk` could not be spawned or failed its handshake ({})",
+            "adapter `{id}` could not be spawned or failed its handshake ({})",
             binary.display()
         )
     })?;
@@ -110,12 +132,12 @@ fn selftest_atk() -> Result<()> {
         .collect();
     if devices.is_empty() {
         bail!(
-            "adapter `atk` returned zero devices from {}",
+            "adapter `{id}` returned zero devices from {}",
             binary.display()
         );
     }
 
-    println!("atk: {} ({})", info.name, info.id);
+    println!("{id}: {} ({})", info.name, info.id);
     for device in &devices {
         println!("  device {} ({})", device.id, device.name);
         for capability in &device.capabilities {
@@ -142,11 +164,11 @@ fn parse_adapter_flag(args: &[String]) -> std::result::Result<Option<String>, St
         if arg == "--adapter" {
             match iter.next() {
                 Some(value) => adapter = Some(value.clone()),
-                None => return Err("--adapter needs a value (`--adapter atk`)".to_string()),
+                None => return Err("--adapter needs a value (`--adapter via`)".to_string()),
             }
         } else if let Some(value) = arg.strip_prefix("--adapter=") {
             if value.is_empty() {
-                return Err("--adapter needs a value (`--adapter atk`)".to_string());
+                return Err("--adapter needs a value (`--adapter via`)".to_string());
             }
             adapter = Some(value.to_string());
         }
@@ -269,7 +291,7 @@ fn print_help() {
          --selftest             Run the headless acceptance check and exit\n  \
          --selftest --adapter atk\n                       \
          Check the out-of-process ATK adapter and print every capability value\n  \
-         --adapter <id>         With --selftest: `mock` (default) or `atk`\n  \
+         --adapter <id>         With --selftest: `mock` (default), `atk` or `via`\n  \
          --version              Print the version and exit\n  \
          --help                 Print this help and exit\n\n\
          Without options hubd starts the resident core: named pipe, adapters and tray icon.\n\

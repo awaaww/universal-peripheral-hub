@@ -27,23 +27,34 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::{json, Value};
 
-/// Registered id and display name of the only out-of-process adapter we ship.
+/// Registered id and display name of the first out-of-process adapter we ship.
 pub const ADAPTER_ID: &str = "atk";
 
-pub fn adapter_info() -> AdapterInfo {
+/// Descriptor for one out-of-process helper.
+///
+/// The hub does not care which protocol a helper speaks; it only needs a stable
+/// id, a display name and the executable that implements the stdio dialect.
+pub fn adapter_info_with(id: &str, name: &str) -> AdapterInfo {
     AdapterInfo {
-        id: ADAPTER_ID.to_string(),
-        name: "ATK (HID)".to_string(),
+        id: id.to_string(),
+        name: name.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
         kind: AdapterKind::OutOfProcess,
     }
 }
 
+pub fn adapter_info() -> AdapterInfo {
+    adapter_info_with(ADAPTER_ID, "ATK (HID)")
+}
+
 /// Factory for [`AdapterInfo`] registrations. Each call builds a fresh adapter,
 /// which is how enabling a crashed adapter clears its disabled latch.
-pub fn factory(binary: PathBuf) -> AdapterFactory {
-    let info = adapter_info();
+pub fn factory_for(info: AdapterInfo, binary: PathBuf) -> AdapterFactory {
     Arc::new(move || Box::new(ProcAdapter::new(info.clone(), binary.clone())))
+}
+
+pub fn factory(binary: PathBuf) -> AdapterFactory {
+    factory_for(adapter_info(), binary)
 }
 
 fn handshake_timeout() -> Duration {

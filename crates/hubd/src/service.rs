@@ -73,11 +73,15 @@ impl DeviceIo for HubIo {
 #[derive(Debug, Clone)]
 pub struct ServiceOptions {
     pub ddc: bool,
-    /// Register the out-of-process ATK adapter when its executable is found.
+    /// Register the out-of-process ATK mouse adapter when its executable is found.
     pub atk: bool,
-    /// Explicit helper path, overriding [`find_atk_adapter`]. Tests use this to
-    /// point at a scripted executable (or at nothing).
+    /// Explicit ATK helper path, overriding [`find_atk_adapter`]. Tests use this
+    /// to point at a scripted executable (or at nothing).
     pub atk_binary: Option<PathBuf>,
+    /// Register the out-of-process VIA keyboard adapter when its executable is found.
+    pub via: bool,
+    /// Explicit VIA helper path, overriding [`find_via_adapter`].
+    pub via_binary: Option<PathBuf>,
 }
 
 impl Default for ServiceOptions {
@@ -86,11 +90,14 @@ impl Default for ServiceOptions {
             ddc: true,
             atk: true,
             atk_binary: None,
+            via: true,
+            via_binary: None,
         }
     }
 }
 
 const ATK_BINARY_NAME: &str = "atk-adapter.exe";
+const VIA_BINARY_NAME: &str = "via-adapter.exe";
 
 /// Locate the ATK helper executable.
 ///
@@ -100,24 +107,37 @@ const ATK_BINARY_NAME: &str = "atk-adapter.exe";
 /// workspace root. A missing helper is not an error — the rest of the hub works
 /// without it.
 pub fn find_atk_adapter() -> Option<PathBuf> {
-    if let Some(explicit) = std::env::var_os("UPH_ATK_ADAPTER") {
+    find_helper("UPH_ATK_ADAPTER", ATK_BINARY_NAME, "atk")
+}
+
+/// Locate the VIA keyboard helper executable.
+pub fn find_via_adapter() -> Option<PathBuf> {
+    find_helper("UPH_VIA_ADAPTER", VIA_BINARY_NAME, "via")
+}
+
+/// Shared lookup for an out-of-process helper.
+///
+/// An explicit environment variable wins, then a sibling of `hubd.exe`, then the
+/// usual development build directories. A missing helper is not an error: the
+/// rest of the hub works without it.
+pub fn find_helper(env_var: &str, binary_name: &str, adapter_dir: &str) -> Option<PathBuf> {
+    if let Some(explicit) = std::env::var_os(env_var) {
         let path = PathBuf::from(explicit);
         if path.is_file() {
             return Some(path);
         }
         tracing::warn!(
             path = %path.display(),
-            "UPH_ATK_ADAPTER does not point at a file; falling back to autodetection"
+            env = env_var,
+            "helper override does not point at a file; falling back to autodetection"
         );
     }
 
     let exe = std::env::current_exe().ok()?;
     let mut dir = exe.parent()?.to_path_buf();
 
-    // Six levels covers `target/debug`, `target/release` and a few nested
-    // layouts (`crates/hubd/target/...`, `adapters/atk/target/...`).
     for _ in 0..6 {
-        for candidate in atk_candidates(&dir) {
+        for candidate in helper_candidates(&dir, binary_name, adapter_dir) {
             if candidate.is_file() {
                 return Some(candidate);
             }
@@ -129,18 +149,50 @@ pub fn find_atk_adapter() -> Option<PathBuf> {
     None
 }
 
-fn atk_candidates(dir: &Path) -> Vec<PathBuf> {
-    let mut found = vec![dir.join(ATK_BINARY_NAME)];
+fn helper_candidates(dir: &Path, binary_name: &str, adapter_dir: &str) -> Vec<PathBuf> {
+    let mut found = vec![dir.join(binary_name)];
     for profile in ["debug", "release"] {
-        found.push(dir.join("target").join(profile).join(ATK_BINARY_NAME));
+        found.push(dir.join("target").join(profile).join(binary_name));
         found.push(
-            dir.join("adapters/atk/target")
+            dir.join("adapters")
+                .join(adapter_dir)
+                .join("target")
                 .join(profile)
-                .join(ATK_BINARY_NAME),
+                .join(binary_name),
         );
     }
-    found.push(dir.join("bin").join(ATK_BINARY_NAME));
+    found.push(dir.join("bin").join(binary_name));
     found
+}
+
+/// One out-of-process helper the service may register.
+struct HelperSpec {
+    enabled: bool,
+    explicit: Option<PathBuf>,
+    found: Option<PathBuf>,
+    id: &'static str,
+    name: &'static str,
+    env_var: &'static str,
+}
+
+impl HelperSpec {
+    fn new(
+        enabled: bool,
+        explicit: Option<PathBuf>,
+        found: Option<PathBuf>,
+        id: &'static str,
+        name: &'static str,
+        env_var: &'static str,
+    ) -> Self {
+        Self {
+            enabled,
+            explicit,
+            found,
+            id,
+            name,
+            env_var,
+        }
+    }
 }
 
 impl Service {
@@ -179,23 +231,51 @@ impl Service {
             }
         }
 
-        // Out of process, so a crash inside the helper cannot take the hub
-        // down with it. A missing executable only means the adapter is not
+        // Out of process, so a crash inside a helper cannot take the hub down
+        // with it. A missing executable only means that adapter is not
         // registered; the hub still works without it.
-        if options.atk {
-            match options.atk_binary.clone().or_else(find_atk_adapter) {
+        let helpers = [
+            HelperSpec::new(
+                options.atk,
+                options.atk_binary.clone(),
+                find_atk_adapter(),
+                "atk",
+                "ATK (HID)",
+                "UPH_ATK_ADAPTER",
+            ),
+            HelperSpec::new(
+                options.via,
+                options.via_binary.clone(),
+                find_via_adapter(),
+                "via",
+                "ATK RS7 Air (VIA)",
+                "UPH_VIA_ADAPTER",
+            ),
+        ];
+        for spec in helpers {
+            if !spec.enabled {
+                continue;
+            }
+            let HelperSpec {
+                id, name, env_var, ..
+            } = spec;
+            match spec.explicit.or(spec.found) {
                 Some(binary) => {
-                    if let Err(err) =
-                        hub.register(proc::adapter_info(), proc::factory(binary.clone()))
-                    {
-                        tracing::warn!(error = %err, "cannot register the ATK adapter");
-                    } else {
-                        tracing::info!(path = %binary.display(), "ATK adapter registered");
+                    let info = proc::adapter_info_with(id, name);
+                    let factory = proc::factory_for(info.clone(), binary.clone());
+                    match hub.register(info, factory) {
+                        Ok(()) => {
+                            tracing::info!(adapter = id, path = %binary.display(), "adapter registered")
+                        }
+                        Err(err) => {
+                            tracing::warn!(adapter = id, error = %err, "cannot register the adapter")
+                        }
                     }
                 }
                 None => tracing::info!(
-                    "no ATK adapter executable found; adapter `atk` is not registered \
-                     (set UPH_ATK_ADAPTER to point at it)"
+                    adapter = id,
+                    env = env_var,
+                    "no helper executable found; adapter is not registered"
                 ),
             }
         }

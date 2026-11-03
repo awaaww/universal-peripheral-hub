@@ -1,6 +1,7 @@
 # ATK peripherals — is there a public protocol?
 
-Status: **research only, nothing implemented**. Stage 1 of M3.
+Status: **research record**. Stages 1–3a are implemented in
+`adapters/atk` (mouse) and `adapters/via` (keyboard); the headset is not.
 
 The question this note answers: before reverse engineering anything, does ATK
 publish a HID protocol specification, and is there a reusable open-source
@@ -386,3 +387,29 @@ Both writes went through `hubd` (not the probe binary) and the panel showed
 `Synced · read back 1000 Hz` / `Synced · read back 250 Hz`. ATK HUB was running
 throughout, which confirms the write path does not require closing it; a silent
 collection still surfaces as `mouse.conflict` rather than a fake value.
+
+## The keyboard: VIA/QMK raw HID (2026-11-03)
+
+The RS7 Air exposes a vendor collection at usage page `0xFF60` / usage `0x61`
+with `InputReportByteLength = OutputReportByteLength = 385` and no feature
+report. The protocol is plain VIA/QMK raw HID, so no vendor-specific reversing
+was needed: request byte 0 is the report id `0x00`, byte 1 is the command, the
+arguments follow, and the reply echoes the command at byte 1.
+
+Commands that answer on this firmware:
+
+| Command | Meaning | Reply |
+| --- | --- | --- |
+| `0x01` | protocol version | `00 01` → 1 |
+| `0x11` | keymap layer count | 4 |
+| `0x12` | dynamic keymap buffer (`off_hi`, `off_lo`, `size`) | echoed offset and size, then big-endian keycodes |
+| `0x0C` | macro count | 8 |
+
+Commands that do **not** work here: `0x04` (get keycode) returns the request's
+row/column echoed back, and `0x08` (lighting get) returns `0xFF`. The keymap is
+768 bytes (4 layers × 96 keys, 6×16); offsets at and above `0x0300` read as
+zero. `adapters/via` therefore advertises only protocol, layers, keys and
+macros, and is read-only until the keymap and lighting write paths are verified.
+
+ATK HUB polls the same collection while it runs; replies that do not echo the
+expected command are discarded and the read waits for the real one.

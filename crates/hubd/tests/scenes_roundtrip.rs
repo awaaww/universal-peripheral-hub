@@ -98,6 +98,7 @@ async fn scenes_roundtrip_and_apply() -> anyhow::Result<()> {
         ServiceOptions {
             ddc: false,
             atk: false,
+            via: false,
             ..Default::default()
         },
     );

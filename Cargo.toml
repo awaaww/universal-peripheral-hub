@@ -7,6 +7,7 @@ members = [
     "adapters/mock",
     "adapters/ddc",
     "adapters/atk",
+    "adapters/via",
     "ui/src-tauri",
 ]
 # The UI shell needs the frontend bundle and the full Tauri toolchain, so it is
@@ -18,6 +19,7 @@ default-members = [
     "adapters/mock",
     "adapters/ddc",
     "adapters/atk",
+    "adapters/via",
 ]
 
 [workspace.package]

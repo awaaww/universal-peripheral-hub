@@ -48,6 +48,7 @@ async fn pipe_round_trip_and_device_push() -> anyhow::Result<()> {
         ServiceOptions {
             ddc: false,
             atk: false,
+            via: false,
             ..Default::default()
         },
     );

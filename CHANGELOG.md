@@ -23,6 +23,14 @@ All notable changes to this project are documented here. The format follows
 - `hubd --selftest --adapter atk` enumerates the adapter and prints every
   capability value, exiting non-zero when the helper is missing or no device
   answers.
+- `adapters/via`: second out-of-process adapter, speaking VIA/QMK raw HID to the
+  ATK RS7 Air keyboard (`373B:1258`, usage page `0xFF60`). Read-only in this
+  milestone: protocol version, keymap layers, key count (derived from the 768-byte
+  dynamic keymap buffer: 4 layers x 96 keys) and macro count. Keymap and lighting
+  writes are not implemented; `write()` returns `unsupported` and no frame that
+  changes a setting is ever sent.
+- `hubd --selftest --adapter via`, and `UPH_VIA_ADAPTER` for an explicit helper
+  path (the ATK helper keeps `UPH_ATK_ADAPTER`).
 - `docs/re/atk-hub.md`: the protocol research record (frame layout, EEPROM map,
   what the vendor binaries actually do, and what is still unknown).
 - `device.set_blocked` RPC and a panel control to stop talking to a monitor
