@@ -11,6 +11,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
   rust:
@@ -73,6 +74,23 @@ jobs:
         with:
           workspaces: ui/src-tauri -> ../../target
           shared-key: ci-tauri
+
+      # `bundle.resources` in tauri.conf.json names the sidecar binaries, and
+      # tauri's build script rejects a missing resource even for `cargo check`.
+      # The binaries are build output, so build and stage them here instead of
+      # committing them.
+      - name: Build sidecars
+        working-directory: .
+        run: cargo build --release -p hubd -p adapter-atk -p adapter-via
+
+      - name: Stage sidecars
+        working-directory: .
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ui/src-tauri/bin | Out-Null
+          Copy-Item target/release/hubd.exe ui/src-tauri/bin/
+          Copy-Item target/release/atk-adapter.exe ui/src-tauri/bin/
+          Copy-Item target/release/via-adapter.exe ui/src-tauri/bin/
 
       - name: Check Tauri shell
         working-directory: .
