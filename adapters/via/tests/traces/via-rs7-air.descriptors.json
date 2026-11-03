@@ -1,11 +1,11 @@
 [
   {
-    "id": "via:0000001a0795f68e",
+    "id": "via:0123456789abcdef",
     "adapter": "via",
     "name": "ATK RS7 Air (VIA)",
     "vendor": "ATK",
     "model": "RS7 Air",
-    "serial": "0000001a0795f68e",
+    "serial": "0123456789abcdef",
     "capabilities": [
       {
         "id": "keyboard.protocol",

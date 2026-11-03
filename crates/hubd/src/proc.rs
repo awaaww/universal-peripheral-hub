@@ -44,7 +44,7 @@ pub fn adapter_info_with(id: &str, name: &str) -> AdapterInfo {
 }
 
 pub fn adapter_info() -> AdapterInfo {
-    adapter_info_with(ADAPTER_ID, "ATK (HID)")
+    adapter_info_with(ADAPTER_ID, "ATK mouse (unofficial)")
 }
 
 /// Factory for [`AdapterInfo`] registrations. Each call builds a fresh adapter,
@@ -904,7 +904,7 @@ mod tests {
     fn test_info() -> AdapterInfo {
         AdapterInfo {
             id: ADAPTER_ID.to_string(),
-            name: "ATK (HID)".to_string(),
+            name: "ATK mouse (unofficial)".to_string(),
             version: "0.1.0".to_string(),
             kind: AdapterKind::OutOfProcess,
         }

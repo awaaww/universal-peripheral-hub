@@ -807,7 +807,7 @@ mod tests {
     fn board() -> RawDevice {
         RawDevice {
             path: "\\\\?\\hid#vid_373b&pid_1258&mi_01&col05#7&1a2b3c4d&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}".to_string(),
-            serial: Some("0000001A0795F68E".to_string()),
+            serial: Some("0123456789ABCDEF".to_string()),
             product: Some("ATK RS7 Air".to_string()),
             vendor_id: 0x373B,
             product_id: 0x1258,
@@ -1042,7 +1042,7 @@ mod tests {
     fn device_id_uses_the_lowercase_serial() {
         let (_core, devices) = enumerated(full_replies(4, 8, &full_keymap()));
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].id, "via:0000001a0795f68e");
+        assert_eq!(devices[0].id, "via:0123456789abcdef");
     }
 
     #[test]
@@ -1133,7 +1133,7 @@ mod tests {
         assert_eq!(device.name, "ATK RS7 Air (VIA)");
         assert_eq!(device.vendor.as_deref(), Some("ATK"));
         assert_eq!(device.model.as_deref(), Some("ATK RS7 Air"));
-        assert_eq!(device.serial.as_deref(), Some("0000001A0795F68E"));
+        assert_eq!(device.serial.as_deref(), Some("0123456789ABCDEF"));
     }
 
     #[test]
@@ -1147,7 +1147,7 @@ mod tests {
         let (mut core, devices) = enumerated(full_replies(4, 8, &full_keymap()));
         assert_eq!(devices.len(), 1);
         assert_eq!(
-            core.read("via:0000001a0795f68e", CAP_KEYS).expect("keys"),
+            core.read("via:0123456789abcdef", CAP_KEYS).expect("keys"),
             CapabilityValue::Int(96)
         );
     }
@@ -1161,7 +1161,7 @@ mod tests {
         let devices = core.enumerate().expect("enumerate");
         assert_eq!(devices.len(), 1);
         assert_eq!(
-            core.read("via:0000001a0795f68e", CAP_KEYS).expect("keys"),
+            core.read("via:0123456789abcdef", CAP_KEYS).expect("keys"),
             CapabilityValue::Int(8)
         );
     }
@@ -1191,7 +1191,7 @@ mod tests {
         let (mut core, devices) = enumerated(full_replies(4, 8, &keymap));
         assert_eq!(devices.len(), 1);
         assert_eq!(
-            core.read("via:0000001a0795f68e", CAP_KEYS).expect("keys"),
+            core.read("via:0123456789abcdef", CAP_KEYS).expect("keys"),
             CapabilityValue::Int(96)
         );
     }
@@ -1203,7 +1203,7 @@ mod tests {
             .replies
             .push_back(reply(CMD_PROTOCOL_VERSION, &[0x00, 0x01]));
         let value = core
-            .read("via:0000001a0795f68e", CAP_PROTOCOL)
+            .read("via:0123456789abcdef", CAP_PROTOCOL)
             .expect("protocol");
         assert_eq!(value, CapabilityValue::Int(1));
         assert_eq!(
@@ -1219,7 +1219,7 @@ mod tests {
             .replies
             .push_back(reply(CMD_LAYER_COUNT, &[4]));
         let value = core
-            .read("via:0000001a0795f68e", CAP_LAYERS)
+            .read("via:0123456789abcdef", CAP_LAYERS)
             .expect("layers");
         assert_eq!(value, CapabilityValue::Int(4));
     }
@@ -1231,7 +1231,7 @@ mod tests {
             .replies
             .push_back(reply(CMD_MACRO_COUNT, &[8]));
         let value = core
-            .read("via:0000001a0795f68e", CAP_MACROS)
+            .read("via:0123456789abcdef", CAP_MACROS)
             .expect("macros");
         assert_eq!(value, CapabilityValue::Int(8));
     }
@@ -1240,7 +1240,7 @@ mod tests {
     fn reading_keys_does_not_touch_the_transport() {
         let (mut core, _devices) = enumerated(full_replies(4, 8, &full_keymap()));
         let writes_before = core.transport.writes.len();
-        let value = core.read("via:0000001a0795f68e", CAP_KEYS).expect("keys");
+        let value = core.read("via:0123456789abcdef", CAP_KEYS).expect("keys");
         assert_eq!(value, CapabilityValue::Int(96));
         assert_eq!(core.transport.writes.len(), writes_before);
     }
@@ -1256,7 +1256,7 @@ mod tests {
             .replies
             .push_back(reply(CMD_PROTOCOL_VERSION, &[0x00, 0x01]));
         let value = core
-            .read("via:0000001a0795f68e", CAP_PROTOCOL)
+            .read("via:0123456789abcdef", CAP_PROTOCOL)
             .expect("protocol after a foreign reply");
         assert_eq!(value, CapabilityValue::Int(1));
     }
@@ -1283,7 +1283,7 @@ mod tests {
         let (mut core, devices) = enumerated(replies);
         assert_eq!(devices.len(), 1);
         assert_eq!(
-            core.read("via:0000001a0795f68e", CAP_KEYS),
+            core.read("via:0123456789abcdef", CAP_KEYS),
             Ok(CapabilityValue::Int(96))
         );
     }
@@ -1292,7 +1292,7 @@ mod tests {
     fn an_unadvertised_capability_is_rejected() {
         let (mut core, _devices) = enumerated(full_replies(4, 8, &full_keymap()));
         let error = core
-            .read("via:0000001a0795f68e", "keyboard.lighting")
+            .read("via:0123456789abcdef", "keyboard.lighting")
             .expect_err("unknown capability");
         assert_eq!(error.kind, ErrorKind::UnknownCapability);
     }
@@ -1311,7 +1311,7 @@ mod tests {
         let (mut core, _devices) = enumerated(full_replies(4, 8, &full_keymap()));
         let writes_before = core.transport.writes.len();
         let error = core
-            .write("via:0000001a0795f68e", CAP_LAYERS, &CapabilityValue::Int(2))
+            .write("via:0123456789abcdef", CAP_LAYERS, &CapabilityValue::Int(2))
             .expect_err("read-only adapter");
         assert_eq!(error.kind, ErrorKind::Unsupported);
         assert_eq!(

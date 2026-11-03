@@ -287,7 +287,7 @@ impl Service {
                 options.atk_binary.clone(),
                 find_atk_adapter(),
                 "atk",
-                "ATK (HID)",
+                "ATK mouse (unofficial)",
                 "UPH_ATK_ADAPTER",
             ),
             HelperSpec::new(

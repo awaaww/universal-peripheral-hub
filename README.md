@@ -8,7 +8,7 @@ described by adapters as a set of typed **capabilities** (brightness, polling
 rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
-> **Status: M4 (partial).** Panel, resident core, DDC/CI adapter, scene engine
+> **Status: M5 (adapters).** Panel, resident core, DDC/CI adapter, scene engine
 > and two out-of-process ATK adapters are implemented. The mouse adapter
 > (`adapters/atk`) reads battery, charging state, wireless link, firmware
 > version, report rate and the active DPI slot; report rate and the DPI slot are
@@ -30,6 +30,21 @@ descriptors rather than hard-coded per vendor.
 > a settings page (language, close-to-tray, auto scan interval, low-battery
 > alerts) in English, 简体中文 and 繁體中文, and shows a device's battery as a ring
 > next to its name instead of a slider.
+
+![The panel with adapters, scenes and device cards](docs/screenshots/panel.jpg)
+
+| Device detail | Settings and diagnostics |
+| --- | --- |
+| ![Detail page generated from capability descriptors](docs/screenshots/device-detail.jpg) | ![Settings page with language, tray behaviour and diagnostics](docs/screenshots/settings.jpg) |
+
+Everything above is generated from capability descriptors: the panel has no
+per-vendor layout code. See `docs/architecture.md` for the model and
+`docs/screenshots/` for the originals.
+
+> **Unofficial.** This project is not affiliated with or endorsed by any vendor.
+> Device support is built from public documentation and from read-only
+> observation of hardware we own; no vendor code or binaries are included. See
+> `NOTICE.md` for the interoperability statement and prior art.
 
 ## Status / roadmap
 

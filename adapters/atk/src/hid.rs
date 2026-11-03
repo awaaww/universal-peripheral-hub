@@ -7,7 +7,7 @@
 //! numbers are not obvious from any header):
 //!
 //! * mouse `373B:11FE`, interface `mi_01&col05`, usage `FF02:0002`,
-//!   input 17 / output 17, serial `541505796617`;
+//!   input 17 / output 17, serial `000000000001`;
 //! * keyboard `373B:1258`, usage `FF60:0061`, input 385 / output 385;
 //! * headset `373B:1204`, usage `FF02:0002`, input 65 / output 65, never
 //!   answers the mouse query frames.

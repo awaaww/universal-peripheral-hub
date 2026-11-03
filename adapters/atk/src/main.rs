@@ -1,4 +1,4 @@
-//! `atk-adapter`: out-of-process adapter for ATK (HID) peripherals.
+//! `atk-adapter`: out-of-process adapter for ATK mouse (unofficial) peripherals.
 //!
 //! One JSON object per line on stdin/stdout; logs go to stderr only, so the
 //! host can treat stdout as a machine channel. See `docs/adapter-protocol.md`
@@ -186,7 +186,7 @@ fn dispatch(adapter: &mut AtkAdapter, request: &RpcRequest) -> Result<Value, Fai
             }
             to_value(HelloResult {
                 id: "atk".to_string(),
-                name: "ATK (HID)".to_string(),
+                name: "ATK mouse (unofficial)".to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
                 protocol: proc::PROTOCOL_VERSION,
             })

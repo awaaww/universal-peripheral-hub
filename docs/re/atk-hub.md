@@ -7,6 +7,17 @@ The question this note answers: before reverse engineering anything, does ATK
 publish a HID protocol specification, and is there a reusable open-source
 implementation we could build on (the way HID++ has libratbag/Solaar)?
 
+## Method and scope
+
+The facts below were established by (a) interoperability analysis of the vendor
+client already installed on this machine, and (b) read-only queries against
+hardware we own. No vendor source code, binaries, assets or configuration are
+copied into or redistributed with this repository — only factual protocol
+details (command ids, byte layouts, query semantics), which are what
+interoperability requires. This project is unofficial and is not affiliated with
+or endorsed by ATK. Product and vendor names are used only to describe
+compatibility.
+
 ## Verdict
 
 **C for our devices and for the capabilities we need (DPI, report rate, RGB),
@@ -45,9 +56,9 @@ Enumerated read-only with `Get-PnpDevice` / `DEVPKEY_Device_HardwareIds`
 
 | Device | VID:PID | Instance | Relevant HID collections |
 | --- | --- | --- | --- |
-| Wireless mouse 8k NANO dongle-L | `373B:11FE` | `541505796617` | MI_01 vendor pages `FF02:0002`, `FF03:0000`, `FF04:0002`, `FF05:0000`, `FF06:0002` |
-| ATK RS7 Air (Hall-effect keyboard) | `373B:1258` | `0000001A0795F68E` | MI_01 vendor page `FF60:0061` |
-| ATK N9 Ultra (headset) dongle | `373B:1204` | `4150353336333806` | MI_03 vendor page `FF02:0002`; MI_05 is a `COM3` serial port |
+| Wireless mouse 8k NANO dongle-L | `373B:11FE` | `000000000001` | MI_01 vendor pages `FF02:0002`, `FF03:0000`, `FF04:0002`, `FF05:0000`, `FF06:0002` |
+| ATK RS7 Air (Hall-effect keyboard) | `373B:1258` | `0123456789ABCDEF` | MI_01 vendor page `FF60:0061` |
+| ATK N9 Ultra (headset) dongle | `373B:1204` | `000000000002` | MI_03 vendor page `FF02:0002`; MI_05 is a `COM3` serial port |
 
 Other sibling vendor IDs seen on the machine (VXE/VGN family) are `3554` and
 `25A7`; they are listed by community tooling but are not what we are targeting.
@@ -150,10 +161,10 @@ Two things already worth noting:
 
 ## Proposed stage 2 (read-only, no writes to devices)
 
-1. Static analysis of `resources/app.asar` with REA: every `node-hid` call site,
-   feature-report payload construction, and `atk-mouse-system-api` call site.
-2. Export tables of `atk-mouse-system-api.win32-x64-msvc.node` and
-   `KeyLinkerlib.dll`, mapped to DPI / report-rate / battery functions.
+1. Interoperability analysis of the vendor client's plaintext JavaScript: every
+   `node-hid` call site and payload construction.
+2. Inspection of the native modules the client ships (`atk-mouse-system-api`,
+   `KeyLinkerlib.dll`) to rule them out as protocol carriers.
 3. Read-only probes against our three devices: which collection answers, what
    report lengths are accepted, and what a battery query returns — using the
    `0x08` frame only if it does not write state (a query opcode is read-only).
@@ -264,9 +275,8 @@ execution) ruled both out as the HID transport for these devices:
   `0xEB`, replies in 20-byte chunks marked `DF AA`. That is a gamepad protocol
   and does not match what the mouse answers on report `0x08`.
 
-So the mouse/keyboard protocol lives in the renderer bundle
-(`resources/main/app.asar`, 48 MB, obfuscated) and/or the signed web client
-(`hub.atk.pro`), not in the native modules. That is why the desktop app only
+So the mouse/keyboard protocol lives in the client's renderer JavaScript and/or
+the web client (`hub.atk.pro`), not in the native modules. That is why the desktop app only
 needs `node-hid` for transport and puts the packet builders in JavaScript.
 
 ### What is still unknown, and the two ways to close it
@@ -276,9 +286,8 @@ DPI, report rate and lighting remain unconfirmed: the EEPROM read
 on this firmware, so either a handshake precedes it or the dongle uses a
 different opcode family. Two honest options:
 
-1. **Deobfuscate the renderer bundle** and read the packet builders
-   (`bykb-advanced-keys.util-*.js`, `event-*.js` carry the command/EEPROM
-   tables). Static, no devices touched, but a few hours and not guaranteed.
+1. **Read the packet builders in the renderer JavaScript.** Part of it is
+   obfuscated. Static, no devices touched, but a few hours and not guaranteed.
 2. **Capture what the vendor app sends** while changing DPI in its UI
    (USBPcap/Wireshark, or a HID proxy). Definitive, but installing a capture
    driver on the user's machine is a bigger ask.
@@ -289,10 +298,9 @@ mouse); DPI and rate should wait for one of the two steps above.
 
 ## The mouse protocol, from the shipped renderer (stage 3a)
 
-The real implementation is not in a `.node` module. It is plain JavaScript in the
-renderer bundle `main/app.asar` → `static_filter-3fyXcGGg.js` (145 799 bytes),
-unobfuscated. Everything below is read from that file and cross-checked against
-the read-only probes above.
+The real implementation is not in a `.node` module; it is plain JavaScript in
+the client's renderer. Everything below was recovered from that interoperability
+analysis and cross-checked against the read-only probes above.
 
 Frame (`Command` base class): 16 bytes, `payload[0]` command id, `payload[1]`
 status, `payload[2..4]` EEPROM address (little endian u16), `payload[4]` data

@@ -6,7 +6,7 @@
 //! Verified on 2026-11-03 with a read-only probe on the real keyboard:
 //!
 //! * `373B:1258` (ATK RS7 Air), interface `mi_01`, usage `FF60:0061`,
-//!   input 385 / output 385, feature 0, serial `0000001A0795F68E`.
+//!   input 385 / output 385, feature 0, serial `0123456789ABCDEF`.
 //!
 //! The collection only accepts full-length reports: a shorter `WriteFile`
 //! fails with `ERROR_INVALID_PARAMETER (87)`, which is why every frame is

@@ -48,7 +48,7 @@ fn main() -> ExitCode {
             None | Some("mock") => hubd::selftest::run(),
             Some("atk") => selftest_proc(
                 "atk",
-                "ATK (HID)",
+                "ATK mouse (unofficial)",
                 hubd::service::find_atk_adapter(),
                 "UPH_ATK_ADAPTER",
                 "adapters/atk",

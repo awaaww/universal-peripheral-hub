@@ -25,6 +25,34 @@ is stated in the source file and in `docs/decisions.md`.
 - **libratbag / Piper** — https://github.com/libratbag/libratbag (MIT).
   Prior art for polling-rate and button/profile modelling. No code is copied.
 
+- **noosxe/atk-tool** — https://github.com/noosxe/atk-tool (MIT). Its
+  `docs/protocol.md` documents the transport frame and a battery query for two
+  ATK product IDs. Used as a public reference and cross-checked against our own
+  hardware; the adapter is an independent implementation.
+- **cyberphantom52/libatk-rs** — https://github.com/cyberphantom52/libatk-rs
+  (GPL-3.0). Used to cross-check protocol *facts* (command ids, EEPROM address
+  map) only. Its code is not copied, linked, or derived from; see the audit note
+  below.
+
+## Interoperability and reverse engineering
+
+The ATK adapters were written to make hardware we own work on Windows without
+the vendor's utility running. They were developed from (a) interoperability
+analysis of the vendor client already installed on this machine, and (b)
+read-only queries against our own devices. **No vendor source code, binaries,
+assets, or configuration are included in this repository or its releases.** What
+is published are protocol facts (command ids, byte layouts, semantics), which
+are functional requirements rather than expressive code.
+
+This project is unofficial. Vendor and product names are trademarks of their
+owners and are used only to describe compatibility. Nothing here is endorsed by
+or affiliated with ATK.
+
+The GPL-3.0 project above was consulted for facts only. To keep the licence
+boundary explicit: no file from it was copied into this repository, and the
+protocol constants it shares (`0x08` report id, command ids, the EEPROM address
+map) are facts about the hardware, independently confirmed on our own devices.
+
 ## Runtime dependencies
 
 Third-party Rust and npm dependencies keep their own licenses; `cargo deny` /

@@ -6,7 +6,7 @@
   },
   "devices": [
     {
-      "id": "0000001a0795f68e",
+      "id": "0123456789abcdef",
       "vid": 14139,
       "pid": 4696,
       "usage_page": 65376,
@@ -18,7 +18,7 @@
   "steps": [
     {
       "op": "open",
-      "device": "0000001a0795f68e"
+      "device": "0123456789abcdef"
     },
     {
       "op": "send",
@@ -238,7 +238,7 @@
     },
     {
       "op": "open",
-      "device": "0000001a0795f68e"
+      "device": "0123456789abcdef"
     },
     {
       "op": "send",
@@ -250,7 +250,7 @@
     },
     {
       "op": "open",
-      "device": "0000001a0795f68e"
+      "device": "0123456789abcdef"
     },
     {
       "op": "send",
@@ -262,7 +262,7 @@
     },
     {
       "op": "open",
-      "device": "0000001a0795f68e"
+      "device": "0123456789abcdef"
     },
     {
       "op": "send",
@@ -274,7 +274,7 @@
     },
     {
       "op": "open",
-      "device": "0000001a0795f68e"
+      "device": "0123456789abcdef"
     },
     {
       "op": "send",

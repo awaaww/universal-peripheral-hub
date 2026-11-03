@@ -23,7 +23,7 @@ use crate::hid::{self, RawDevice, Transport, WindowsHid};
 use crate::protocol;
 
 pub const ADAPTER_ID: &str = "atk";
-pub const ADAPTER_NAME: &str = "ATK (HID)";
+pub const ADAPTER_NAME: &str = "ATK mouse (unofficial)";
 /// Vendor control program that may hold the same collection open.
 pub const ATK_HUB_EXE: &str = "ATK HUB.exe";
 /// Replies arrive in milliseconds when the link is awake; the vendor app also
@@ -733,7 +733,7 @@ mod tests {
     fn mouse() -> RawDevice {
         RawDevice {
             path: "\\\\?\\hid#vid_373b&pid_11fe&mi_01&col05#test".to_string(),
-            serial: Some("541505796617".to_string()),
+            serial: Some("000000000001".to_string()),
             product: Some("Wireless mouse 8k NANO dongle-L".to_string()),
             vendor_id: 0x373B,
             product_id: 0x11FE,
@@ -766,9 +766,9 @@ mod tests {
     #[test]
     fn device_id_is_the_lowercase_serial() {
         let (_, device) = enumerated(false);
-        assert_eq!(device.id, "atk:541505796617");
+        assert_eq!(device.id, "atk:000000000001");
         assert_eq!(device.adapter, "atk");
-        assert_eq!(device.serial.as_deref(), Some("541505796617"));
+        assert_eq!(device.serial.as_deref(), Some("000000000001"));
         assert_eq!(device.name, "Wireless mouse 8k NANO dongle-L");
     }
 
@@ -949,7 +949,7 @@ mod tests {
     fn silent_collection_is_not_exposed() {
         let keyboard = RawDevice {
             path: "\\\\?\\hid#vid_373b&pid_1258&mi_01#test".to_string(),
-            serial: Some("0000001a0795f68e".to_string()),
+            serial: Some("0123456789abcdef".to_string()),
             product: Some("RS7 Air".to_string()),
             vendor_id: 0x373B,
             product_id: 0x1258,
@@ -1010,7 +1010,7 @@ mod tests {
         let adapter = AtkAdapter::new();
         let info = adapter.info();
         assert_eq!(info.id, "atk");
-        assert_eq!(info.name, "ATK (HID)");
+        assert_eq!(info.name, "ATK mouse (unofficial)");
         assert_eq!(info.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(info.kind, AdapterKind::OutOfProcess);
     }
