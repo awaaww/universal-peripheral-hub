@@ -4,6 +4,17 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.6.1 — packaging robustness
+
+### Fixed
+
+- `--autostart on` now creates the per-user `Run` key when a fresh Windows profile
+  has none, and `--autostart off` treats a missing key as already off. Before this,
+  enabling auto-start on a brand-new profile failed with "the system cannot find the
+  file specified".
+- CI builds the sidecar binaries before checking the Tauri shell, because
+  `bundle.resources` names files that are build output rather than tracked sources.
+
 ## 0.6.0 — adapter trace record and replay
 
 ### Added

@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "adapter-atk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "hub-core",
@@ -19,7 +19,7 @@ dependencies = [
 
 [[package]]
 name = "adapter-ddc"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hub-core",
  "serde",
@@ -31,14 +31,14 @@ dependencies = [
 
 [[package]]
 name = "adapter-mock"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hub-core",
 ]
 
 [[package]]
 name = "adapter-via"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "hub-core",
@@ -1525,7 +1525,7 @@ checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
 name = "hub-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1535,7 +1535,7 @@ dependencies = [
 
 [[package]]
 name = "hub-proto"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hub-core",
  "serde",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "hub-trace"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -1553,7 +1553,7 @@ dependencies = [
 
 [[package]]
 name = "hubd"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "adapter-ddc",
  "adapter-mock",
@@ -4094,7 +4094,7 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "universal-peripheral-hub"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "hub-proto",
  "serde",

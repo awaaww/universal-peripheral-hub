@@ -1,5 +1,7 @@
 # Universal Peripheral Hub
 
+[![CI](https://github.com/awaaww/universal-peripheral-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/awaaww/universal-peripheral-hub/actions/workflows/ci.yml)
+
 One Windows application for monitors, keyboards, mice, headsets and controllers,
 instead of one vendor utility per device.
 
