@@ -376,3 +376,30 @@ currentUser`), and the uninstaller removes the value before it kills the
 processes. `hubd` starts with no arguments from both the installer and the Run
 key, so it hides its own console window at startup; the CLI modes keep the
 console.
+
+## D33 — Preferences live in `settings.json`, and auto scan reuses `adapters.reload`
+
+Panel preferences are a `Prefs` struct inside the existing `settings.json`,
+exposed over the pipe as `prefs.get` / `prefs.set` and pushed back as
+`prefs.changed`. `hubd` normalizes every value on write (unknown language → `en`,
+0 or out-of-range scan interval → 15–3600 s, battery threshold → 1–99 %) and
+returns the normalized copy, so the panel never has to guess what the core
+accepted.
+
+Auto scanning is a loop in `hubd`, not a panel timer: the panel may be closed
+while the tray keeps running, and a scan must not depend on a window existing.
+The loop ticks every five seconds and calls the same `reload_adapters` path the
+Rescan button uses, so a scheduled scan and a manual one cannot diverge. The
+interval is a preference (`auto_scan_secs`, `0` disables it); enabling the
+option writes the same value the UI shows.
+
+Rejected alternatives: a separate `scanner` task per adapter (three timers
+fighting over the same HID/DDC handles); scanning from the panel (stops when the
+window closes, and the tray menu's state would go stale); a dedicated
+`prefs.json` (a second file to migrate, back up and quarantine for no gain).
+
+Battery alerts have a small hysteresis in the core: an alert fires once when a
+device drops to or below the threshold and re-arms only after the reading rises
+more than five points above it. Without the re-arm a machine hovering at the
+threshold would beep on every check; without the "once" it would beep every
+thirty seconds.

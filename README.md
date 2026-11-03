@@ -25,8 +25,11 @@ descriptors rather than hard-coded per vendor.
 > ATK HUB does not have to be closed: reads returned real values while it was
 > running in our tests. If the mouse control collection goes silent (the vendor
 > tool holding it, or an idle wireless mouse), the panel says so and `Rescan`
-> rebuilds the adapters; moving the mouse once is usually enough. Auto-start and
-> a per-user installer ship with 0.3.0; code signing does not.
+> rebuilds the adapters; moving the mouse once is usually enough. Auto-start
+> and a per-user installer ship with 0.4.0; code signing does not. The panel has
+> a settings page (language, close-to-tray, auto scan interval, low-battery
+> alerts) in English, 简体中文 and 繁體中文, and shows a device's battery as a ring
+> next to its name instead of a slider.
 
 ## Status / roadmap
 
@@ -36,7 +39,7 @@ descriptors rather than hard-coded per vendor.
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
 | M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read + keymap editing; headset not) |
-| M4 | Full panel UI | partial (descriptor-driven controls) |
+| M4 | Full panel UI | partial (descriptor-driven controls, settings page, en + zh-CN + zh-TW) |
 | M5 | Session recording / replay | not implemented |
 | M6 | Packaging, auto-start, signing | **partial** (unsigned per-user NSIS installer, auto-start) |
 | M7 | Public release | not implemented |
@@ -76,6 +79,20 @@ auto-start for the current user and starts the tray process. Uninstalling
 removes the program and the auto-start value but keeps
 `%APPDATA%\UniversalPeripheralHub\` (settings, scenes, keymap backups) so a
 reinstall picks up where it left off.
+
+The panel's gear button opens a settings page:
+
+- **Language** — English, 简体中文, 繁體中文. The tray menu and battery alerts
+  follow the same preference.
+- **Close button** — hide to the tray (the core keeps running) or quit both
+  processes.
+- **Auto scan** — rebuild every adapter every 15–300 s. Off by default; the
+  `Rescan` button and the startup scan work regardless.
+- **Low battery** — a tray notification when a device drops to or below a
+  percentage you pick; it fires once and re-arms after the battery recovers.
+
+Preferences live in `%APPDATA%\UniversalPeripheralHub\settings.json` under
+`prefs`, and `hubd` normalizes anything out of range.
 
 Auto-start is a per-user `Run` value. Toggle it from the tray menu
 ("Start with Windows") or headlessly:

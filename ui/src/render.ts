@@ -1,4 +1,5 @@
 import { clear, el } from "./dom";
+import { t } from "./i18n";
 import { keymapEditor } from "./keymap";
 import type {
   AdapterState,
@@ -46,6 +47,8 @@ export interface Actions {
   toggleBlockedList(adapterId: string): void;
   applyScene(sceneId: string): void;
   setSceneOption(option: "allow_side_effects" | "startup_apply", checked: boolean): void;
+  /** Open the settings overlay (language, close behaviour, scan, battery alert). */
+  openSettings(): void;
   /** Re-render from the current state without touching the hub. */
   redraw(): void;
 }
@@ -72,35 +75,40 @@ export function render(root: HTMLElement, state: UiState, actions: Actions): voi
 function header(state: UiState, actions: Actions): HTMLElement {
   const pill = el("span", {
     class: `pill ${state.online ? "pill-online" : "pill-offline"}`,
-    text: state.online ? "hubd connected" : "hubd not reachable",
+    text: state.online ? t("app.connected") : t("app.disconnected"),
   });
   return el("header", { class: "topbar" }, [
     el("div", { class: "brand" }, [
       el("div", { class: "brand-mark", text: "UP" }),
       el("div", {}, [
-        el("h1", { text: "Universal Peripheral Hub" }),
-        el("p", { class: "subtitle", text: "One process for displays, input, audio and more." }),
+        el("h1", { text: t("app.title") }),
+        el("p", { class: "subtitle", text: t("app.subtitle") }),
       ]),
     ]),
     el("div", { class: "topbar-actions" }, [
       pill,
-      el("button", { class: "button", text: "Rescan", onclick: () => actions.rescan() }),
+      el("button", { class: "button", text: t("app.rescan"), onclick: () => actions.rescan() }),
+      el("button", {
+        class: "button button-icon",
+        type: "button",
+        text: "⚙",
+        title: t("app.settings"),
+        "aria-label": t("app.settings"),
+        onclick: () => actions.openSettings(),
+      }),
     ]),
   ]);
 }
 
 function offline(state: UiState, actions: Actions): HTMLElement {
-  const hint = el("p", {
-    class: "muted",
-    text: "The resident core (hubd) is not answering. It is started automatically by the panel and by the tray icon.",
-  });
+  const hint = el("p", { class: "muted", text: t("offline.body") });
   return el("section", { class: "banner banner-error" }, [
     el("div", {}, [
-      el("strong", { text: "Cannot reach the hub" }),
+      el("strong", { text: t("offline.title") }),
       hint,
       state.error ? el("pre", { class: "detail", text: state.error }) : el("span", {}),
     ]),
-    el("button", { class: "button", text: "Try again", onclick: () => actions.rescan() }),
+    el("button", { class: "button", text: t("offline.retry"), onclick: () => actions.rescan() }),
   ]);
 }
 
@@ -108,7 +116,7 @@ function offline(state: UiState, actions: Actions): HTMLElement {
 function actionError(message: string): HTMLElement {
   return el("section", { class: "banner banner-error" }, [
     el("div", {}, [
-      el("strong", { text: "That action failed" }),
+      el("strong", { text: t("error.actionFailed") }),
       el("p", { class: "muted", text: message }),
     ]),
   ]);
@@ -116,7 +124,7 @@ function actionError(message: string): HTMLElement {
 
 function adapters(list: AdapterState[], state: UiState, actions: Actions): HTMLElement {
   const strip = el("section", { class: "adapters" }, [
-    el("h2", { class: "section-title", text: "Adapters" }),
+    el("h2", { class: "section-title", text: t("adapters.title") }),
   ]);
   const row = el("div", { class: "adapter-row" });
   // A missing block list (older hub, or nothing ignored) is simply empty.
@@ -125,7 +133,7 @@ function adapters(list: AdapterState[], state: UiState, actions: Actions): HTMLE
     const tokens = blocked[adapter.id] ?? [];
     const button = el("button", {
       class: `button button-small ${adapter.enabled ? "" : "button-ghost"}`,
-      text: adapter.enabled ? "Disable" : "Enable",
+      text: adapter.enabled ? t("adapters.disable") : t("adapters.enable"),
       onclick: () => actions.toggleAdapter(adapter),
     });
     const meta = el("div", { class: "adapter-meta" });
@@ -133,14 +141,19 @@ function adapters(list: AdapterState[], state: UiState, actions: Actions): HTMLE
     meta.append(
       el("span", {
         class: "muted",
-        text: adapter.enabled ? `${adapter.device_count} device(s)` : "disabled",
+        text: adapter.enabled
+          ? t("adapters.deviceCount", { count: adapter.device_count })
+          : t("adapters.disabled"),
       }),
       button,
     );
     const node = el("div", { class: `adapter ${adapter.enabled ? "" : "adapter-off"}` }, [
       el("div", { class: "adapter-main" }, [
         el("span", { class: "adapter-name", text: adapter.name }),
-        el("span", { class: "tag", text: adapter.kind === "in_process" ? "built-in" : "subprocess" }),
+        el("span", {
+          class: "tag",
+          text: adapter.kind === "in_process" ? t("adapters.builtIn") : t("adapters.subprocess"),
+        }),
         el("span", { class: "muted", text: `v${adapter.version}` }),
       ]),
       meta,
@@ -161,8 +174,8 @@ function blockedChip(adapter: AdapterState, count: number, state: UiState, actio
     class: `blocked-chip ${open ? "blocked-chip-open" : ""}`,
     type: "button",
     "aria-expanded": open ? "true" : "false",
-    title: `${count} ignored device token(s) on ${adapter.name}`,
-    text: `${count} ignored`,
+    title: t("adapters.ignoredTitle", { count, adapter: adapter.name }),
+    text: t("adapters.ignoredCount", { count }),
     onclick: () => actions.toggleBlockedList(adapter.id),
   });
 }
@@ -177,8 +190,8 @@ function blockedList(adapter: AdapterState, tokens: string[], actions: Actions):
         el("button", {
           class: "link-button",
           type: "button",
-          text: "Restore",
-          title: `Talk to ${token} again.`,
+          text: t("adapters.restore"),
+          title: t("adapters.restoreTitle", { token }),
           onclick: () => actions.restoreDevice(adapter, token),
         }),
       ]),
@@ -194,18 +207,13 @@ function blockedList(adapter: AdapterState, tokens: string[], actions: Actions):
  */
 function scenes(result: ScenesResult, state: UiState, actions: Actions): HTMLElement {
   const section = el("section", { class: "scenes" }, [
-    el("h2", { class: "section-title", text: "Scenes" }),
+    el("h2", { class: "section-title", text: t("scenes.title") }),
   ]);
   const entries = Object.entries(result.document.scenes);
   if (entries.length === 0) {
     // A document with no scenes gets one honest line and no controls: an Apply
     // button without a scene, or toggles with nothing to apply, would lie.
-    section.append(
-      el("p", {
-        class: "muted scene-empty",
-        text: "No scenes yet. They live in %APPDATA%\\UniversalPeripheralHub\\scenes.json.",
-      }),
-    );
+    section.append(el("p", { class: "muted scene-empty", text: t("scenes.empty") }));
     return section;
   }
   const list = el("div", { class: "scene-list" });
@@ -236,12 +244,12 @@ function sceneRow(
       el("span", {
         class: "scene-dot",
         "aria-hidden": "true",
-        title: "Selected by the current rule.",
+        title: t("scenes.selectedByRule"),
       }),
     );
   }
   head.append(el("span", { class: "scene-name", text: scene.name }));
-  if (current) head.append(el("span", { class: "scene-pill-current", text: "current" }));
+  if (current) head.append(el("span", { class: "scene-pill-current", text: t("scenes.current") }));
   head.append(
     el("span", {
       class: summary.mono ? "scene-summary mono" : "scene-summary",
@@ -255,8 +263,8 @@ function sceneRow(
     el("button", {
       class: "button button-small",
       type: "button",
-      text: "Apply",
-      title: `Apply “${scene.name}” now.`,
+      text: t("scenes.apply"),
+      title: t("scenes.applyTitle", { name: scene.name }),
       disabled: state.scenesBusy,
       onclick: () => actions.applyScene(id),
     }),
@@ -267,12 +275,16 @@ function sceneRow(
 function sceneSummary(items: SceneItem[]): { text: string; title: string; mono: boolean } {
   const types = items.map((item) => item.cap_type);
   if (types.length === 0) {
-    return { text: "0 values", title: "This scene has no items.", mono: false };
+    return { text: t("scenes.valuesCount", { count: 0 }), title: t("scenes.noItems"), mono: false };
   }
   if (types.length <= 2) {
     return { text: types.join(", "), title: types.join("\n"), mono: true };
   }
-  return { text: `${types.length} values`, title: types.join("\n"), mono: false };
+  return {
+    text: t("scenes.valuesCount", { count: types.length }),
+    title: types.join("\n"),
+    mono: false,
+  };
 }
 
 /** Engine state: baseline, current auto match, and what the last apply did. */
@@ -283,7 +295,7 @@ function sceneEngine(result: ScenesResult): HTMLElement {
     box.append(
       el("p", {
         class: "scene-engine-line",
-        text: "Baseline not recorded yet (nothing will be written).",
+        text: t("scenes.baselineMissing"),
       }),
     );
   } else if (runtime.current_exe) {
@@ -294,14 +306,14 @@ function sceneEngine(result: ScenesResult): HTMLElement {
       // otherwise would be a small lie the user cannot debug.
       const text =
         runtime.last_source === "manual"
-          ? `Applied manually: ${name}`
-          : `Auto: ${runtime.current_exe} → ${name}`;
+          ? t("scenes.appliedManually", { name })
+          : t("scenes.autoMatch", { exe: runtime.current_exe, name });
       box.append(el("p", { class: "scene-engine-line", text }));
     } else {
       box.append(
         el("p", {
           class: "scene-engine-line",
-          text: `Auto: no rule matches ${runtime.current_exe}`,
+          text: t("scenes.autoNoMatch", { exe: runtime.current_exe }),
         }),
       );
     }
@@ -312,7 +324,11 @@ function sceneEngine(result: ScenesResult): HTMLElement {
     box.append(
       el("p", {
         class: "scene-report",
-        text: `Wrote ${report.written} · unchanged ${report.unchanged} · skipped ${report.skipped}`,
+        text: t("scenes.report", {
+          written: report.written,
+          unchanged: report.unchanged,
+          skipped: report.skipped,
+        }),
       }),
     );
     const issues = [...(report.failed ?? []), ...(report.missing ?? [])];
@@ -321,7 +337,10 @@ function sceneEngine(result: ScenesResult): HTMLElement {
       box.append(
         el("p", {
           class: "scene-issues",
-          text: rest.length === 0 ? first : `${first} +${rest.length} more`,
+          text:
+            rest.length === 0
+              ? first
+              : t("scenes.moreIssues", { first: first ?? "", count: rest.length }),
           title: issues.join("\n"),
         }),
       );
@@ -333,12 +352,12 @@ function sceneEngine(result: ScenesResult): HTMLElement {
 function sceneOptions(options: SceneOptions, state: UiState, actions: Actions): HTMLElement {
   return el("div", { class: "scene-options" }, [
     optionToggle(
-      "Allow changes that briefly blank the display (HDR, picture mode)",
+      t("scenes.allowSideEffects"),
       Boolean(options.allow_side_effects),
       state.scenesBusy,
       (checked) => actions.setSceneOption("allow_side_effects", checked),
     ),
-    optionToggle("Apply at startup", Boolean(options.startup_apply), state.scenesBusy, (checked) =>
+    optionToggle(t("scenes.applyAtStartup"), Boolean(options.startup_apply), state.scenesBusy, (checked) =>
       actions.setSceneOption("startup_apply", checked),
     ),
   ]);
@@ -361,12 +380,12 @@ function devices(state: UiState, actions: Actions): HTMLElement {
   if (devices.length === 0) {
     section.append(
       el("div", { class: "empty" }, [
-        el("strong", { text: state.loading ? "Looking for devices…" : "No devices" }),
+        el("strong", {
+          text: state.loading ? t("devices.loadingTitle") : t("devices.emptyTitle"),
+        }),
         el("p", {
           class: "muted",
-          text: state.loading
-            ? "Asking every enabled adapter for its device list."
-            : "All adapters are disabled, or no adapter reported a device.",
+          text: state.loading ? t("devices.loadingBody") : t("devices.emptyBody"),
         }),
       ]),
     );
@@ -380,10 +399,17 @@ function devices(state: UiState, actions: Actions): HTMLElement {
 
 function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions): HTMLElement {
   const subtitle = [device.vendor, device.model].filter(Boolean).join(" · ");
+  // A read-only integer percentage (or an adapter-declared battery) is a
+  // headline gauge, not a row: it moves into the card header.
+  const battery = device.capabilities.find(isBatteryCapability);
+  const titleRow = el("div", { class: "card-title-row" }, [el("h3", { text: device.name })]);
+  if (battery) {
+    titleRow.append(batteryRing(battery, state.values.get(key(device.id, battery.id))));
+  }
   const card = el("article", { class: "card" }, [
     el("div", { class: "card-head" }, [
       el("div", {}, [
-        el("h3", { text: device.name }),
+        titleRow,
         subtitle ? el("p", { class: "muted", text: subtitle }) : el("span", {}),
         device.serial ? el("p", { class: "mono muted", text: device.serial }) : el("span", {}),
       ]),
@@ -392,8 +418,8 @@ function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions):
         el("button", {
           class: "link-button",
           type: "button",
-          text: "Ignore",
-          title: "Stop talking to this monitor. Use this for a KVM or splitter that hangs the DDC bus.",
+          text: t("devices.ignore"),
+          title: t("devices.ignoreTitle"),
           onclick: () => actions.ignoreDevice(device),
         }),
       ]),
@@ -402,10 +428,106 @@ function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions):
 
   const rows = el("div", { class: "rows" });
   for (const capability of device.capabilities) {
+    if (capability === battery) continue;
     rows.append(capabilityRow(device, capability, state, actions));
   }
   card.append(rows);
   return card;
+}
+
+/** A battery-like capability: read-only integer percentage, or `*.battery`. */
+function isBatteryCapability(capability: CapabilityDescriptor): boolean {
+  return (
+    capability.access === "read_only" &&
+    capability.kind.type === "int" &&
+    (capability.kind.unit === "%" || capability.cap_type.endsWith(".battery"))
+  );
+}
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+const BATTERY_SIZE = 34;
+const BATTERY_STROKE = 3.5;
+
+function svgEl(tag: string, attrs: Record<string, string | number>): SVGElement {
+  const node = document.createElementNS(SVG_NS, tag) as SVGElement;
+  for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, String(value));
+  return node;
+}
+
+function batteryColour(percent: number): string {
+  if (percent >= 50) return "#3ddc97";
+  if (percent >= 20) return "#e0a33e";
+  return "#e05d5d";
+}
+
+/**
+ * Small SVG donut for a battery reading. The arc is proportional to the
+ * percentage and the number sits inside it; the wrapper carries the tooltip.
+ */
+function batteryRing(
+  capability: CapabilityDescriptor,
+  value: CapabilityValue | undefined,
+): HTMLElement {
+  const reading = value?.type === "int" ? value.value : null;
+  const percent = Math.min(100, Math.max(0, reading ?? 0));
+  const colour = batteryColour(percent);
+  const radius = (BATTERY_SIZE - BATTERY_STROKE) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const filled = (percent / 100) * circumference;
+  const centre = BATTERY_SIZE / 2;
+
+  const svg = svgEl("svg", {
+    class: "battery-ring",
+    width: BATTERY_SIZE,
+    height: BATTERY_SIZE,
+    viewBox: `0 0 ${BATTERY_SIZE} ${BATTERY_SIZE}`,
+    role: "img",
+    "aria-label": `${capability.label}: ${reading === null ? t("card.reading") : `${percent}%`}`,
+  });
+  svg.append(
+    svgEl("circle", {
+      class: "battery-track",
+      cx: centre,
+      cy: centre,
+      r: radius,
+      fill: "none",
+      "stroke-width": BATTERY_STROKE,
+    }),
+    svgEl("circle", {
+      class: "battery-arc",
+      cx: centre,
+      cy: centre,
+      r: radius,
+      fill: "none",
+      stroke: colour,
+      "stroke-width": BATTERY_STROKE,
+      "stroke-linecap": "round",
+      "stroke-dasharray": `${filled} ${circumference - filled}`,
+      transform: `rotate(-90 ${centre} ${centre})`,
+    }),
+  );
+  const number = svgEl("text", {
+    class: "battery-number",
+    x: centre,
+    y: centre,
+    "text-anchor": "middle",
+    "dominant-baseline": "central",
+    fill: colour,
+  });
+  number.textContent = reading === null ? "—" : String(Math.round(percent));
+  svg.append(number);
+
+  return el(
+    "span",
+    {
+      class: "battery",
+      title:
+        reading === null
+          ? capability.label
+          : t("battery.tooltip", { label: capability.label, percent: Math.round(percent) }),
+    },
+    [svg],
+  );
 }
 
 function capabilityRow(
@@ -425,11 +547,13 @@ function capabilityRow(
   ]);
 
   const meta: HTMLElement[] = [
-    el("span", { class: "muted", text: `${capability.cost.latency_ms} ms` }),
+    el("span", { class: "muted", text: t("card.latency", { ms: capability.cost.latency_ms }) }),
   ];
-  if (capability.access === "read_only") meta.push(el("span", { class: "tag", text: "read-only" }));
+  if (capability.access === "read_only") {
+    meta.push(el("span", { class: "tag", text: t("card.readOnly") }));
+  }
   if (capability.cost.side_effects.includes("signal_renegotiation")) {
-    meta.push(el("span", { class: "tag tag-warn", text: "may renegotiate the signal" }));
+    meta.push(el("span", { class: "tag tag-warn", text: t("card.renegotiate") }));
   }
 
   const control = buildControl(device, capability, value, actions);
@@ -442,9 +566,14 @@ function capabilityRow(
       el("span", { class: "status status-error", text: `${readError.kind ?? "error"}: ${readError.message}` }),
     );
   } else if (capability.access === "write_only") {
-    feedback.append(el("span", { class: "muted", text: "write-only" }));
+    feedback.append(el("span", { class: "muted", text: t("card.writeOnly") }));
   } else {
-    feedback.append(el("span", { class: "muted", text: value === undefined ? "reading…" : "read back from device" }));
+    feedback.append(
+      el("span", {
+        class: "muted",
+        text: value === undefined ? t("card.reading") : t("card.readBack"),
+      }),
+    );
   }
 
   if (capability.cap_type === "keyboard.keymap" && value?.type === "bytes") {
@@ -474,6 +603,13 @@ function buildControl(
   const disabled = capability.access === "read_only";
   switch (capability.kind.type) {
     case "int": {
+      // A disabled slider still looks draggable, so a read-only integer is
+      // plain value text. (Battery-like ones live in the card header instead.)
+      if (disabled) {
+        const shown =
+          value?.type === "int" ? `${value.value}${capability.kind.unit ?? ""}` : "—";
+        return el("div", { class: "control" }, [el("span", { class: "mono muted", text: shown })]);
+      }
       const min = capability.kind.min;
       const max = capability.kind.max;
       const step = capability.kind.step || 1;
@@ -505,7 +641,7 @@ function buildControl(
         disabled,
         onclick: () => actions.write(device, capability, { type: "bool", value: !current }),
       }, [el("span", { class: "switch-knob" })]);
-      return el("div", { class: "control" }, [toggle, el("span", { class: "muted", text: current ? "On" : "Off" })]);
+      return el("div", { class: "control" }, [toggle, el("span", { class: "muted", text: current ? t("control.on") : t("control.off") })]);
     }
     case "enum": {
       // A disabled dropdown still renders every option, which reads like the
@@ -557,7 +693,7 @@ function buildControl(
           : "—";
       return el("div", { class: "control" }, [
         el("span", { class: "mono muted", text: hex }),
-        el("span", { class: "tag", text: "raw bytes" }),
+        el("span", { class: "tag", text: t("card.rawBytes") }),
       ]);
     }
   }
@@ -565,7 +701,7 @@ function buildControl(
 
 function footer(): HTMLElement {
   return el("footer", { class: "footer" }, [
-    el("span", { text: "Device cards are generated from adapter capability descriptors." }),
-    el("span", { class: "mono", text: "M0 · mock adapter" }),
+    el("span", { text: t("footer.note") }),
+    el("span", { class: "mono", text: t("footer.milestone") }),
   ]);
 }

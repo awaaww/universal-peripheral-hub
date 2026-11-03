@@ -10,6 +10,7 @@ pub mod capability;
 pub mod device;
 pub mod error;
 pub mod hub;
+pub mod prefs;
 pub mod scene;
 pub mod settings;
 pub mod value;
@@ -21,6 +22,7 @@ pub use capability::{
 pub use device::DeviceDescriptor;
 pub use error::{ErrorKind, HubError, Result};
 pub use hub::{AdapterState, Hub, WriteOutcome};
+pub use prefs::Prefs;
 pub use scene::{
     ApplyReport, Scene, SceneItem, SceneOptions, SceneRule, ScenesFile, SCENES_VERSION,
 };

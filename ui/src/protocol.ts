@@ -136,3 +136,26 @@ export interface ScenesResult {
 /// `map` re-evaluates the current foreground executable (rules/options changed);
 /// `save` only persists the document (value edits).
 export type SceneMode = "map" | "save";
+
+/// Persisted preferences, mirrored from the `prefs.*` RPCs and the
+/// `prefs.changed` push.
+export type Language = "en" | "zh-CN" | "zh-TW";
+
+export interface Prefs {
+  language: Language;
+  /// `true` hides the window to the tray instead of quitting.
+  close_to_tray: boolean;
+  /// `0` disables the periodic rescan; otherwise the backend answers 15..=3600.
+  auto_scan_secs: number;
+  battery_alert: boolean;
+  battery_alert_percent: number;
+}
+
+/// Backend defaults, used until `prefs.get` answers (or if that call fails).
+export const DEFAULT_PREFS: Prefs = {
+  language: "en",
+  close_to_tray: true,
+  auto_scan_secs: 0,
+  battery_alert: false,
+  battery_alert_percent: 20,
+};

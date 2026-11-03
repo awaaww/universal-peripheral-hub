@@ -8,7 +8,7 @@ pub mod proc;
 use std::collections::BTreeMap;
 
 use hub_core::{
-    AdapterState, ApplyReport, CapabilityValue, DeviceDescriptor, HubError, ScenesFile,
+    AdapterState, ApplyReport, CapabilityValue, DeviceDescriptor, HubError, Prefs, ScenesFile,
     WriteOutcome,
 };
 use serde::{Deserialize, Serialize};
@@ -73,6 +73,15 @@ pub mod method {
     /// Notification sent by a second `hubd` instance (or by a shortcut) asking
     /// the running instance to show the panel.
     pub const ACTIVATE: &str = "hub.activate";
+    /// Panel/tray preferences (language, auto scan, battery alerts, close
+    /// behaviour). Small enough to always send whole.
+    pub const PREFS_GET: &str = "prefs.get";
+    pub const PREFS_SET: &str = "prefs.set";
+    /// Ask the core to stop and exit. Used by the panel when the user chose
+    /// "quit" as the close behaviour and by nothing else.
+    pub const HUB_SHUTDOWN: &str = "hub.shutdown";
+    /// Server push: preferences changed (another panel window, the tray).
+    pub const PREFS_CHANGED: &str = "prefs.changed";
     /// Server push: the visible device set changed.
     pub const DEVICES_CHANGED: &str = "devices.changed";
     /// Server push: the scene document or the runtime state changed.
@@ -364,6 +373,25 @@ pub type DevicesChanged = DevicesResult;
 pub fn devices_changed_notification(result: &DevicesResult) -> Request {
     Request::notification(
         method::DEVICES_CHANGED,
+        serde_json::to_value(result).unwrap_or(Value::Null),
+    )
+}
+
+/// `prefs.get` / `prefs.set` / `prefs.changed` payload: the whole preference
+/// set, normalized by the core (unknown language -> English, numbers clamped).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefsResult {
+    pub prefs: Prefs,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PrefsParams {
+    pub prefs: Prefs,
+}
+
+pub fn prefs_changed_notification(result: &PrefsResult) -> Request {
+    Request::notification(
+        method::PREFS_CHANGED,
         serde_json::to_value(result).unwrap_or(Value::Null),
     )
 }

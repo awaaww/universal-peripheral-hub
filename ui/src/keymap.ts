@@ -1,4 +1,5 @@
 import { el } from "./dom";
+import { t } from "./i18n";
 import type { CapabilityDescriptor, CapabilityValue, DeviceDescriptor } from "./protocol";
 import type { Actions, UiState } from "./render";
 
@@ -88,8 +89,39 @@ export const KEYCODES: Keycode[] = [
 
 const BY_CODE = new Map(KEYCODES.map((keycode) => [keycode.code, keycode.label]));
 
+/**
+ * Named keycodes whose display label is translated. The keycode tables above
+ * keep the English abbreviations: `shortLabelFor` keys off them to build the
+ * grid-sized labels, and those stay short/ASCII on every language.
+ */
+const LABEL_KEYS: Record<number, string> = {
+  0x0000: "keycode.none",
+  0x0001: "keycode.transparent",
+  0x0028: "keycode.enter",
+  0x0029: "keycode.escape",
+  0x002a: "keycode.backspace",
+  0x002b: "keycode.tab",
+  0x002c: "keycode.space",
+  0x0039: "keycode.capsLock",
+  0x0046: "keycode.printScreen",
+  0x0047: "keycode.scrollLock",
+  0x0048: "keycode.pause",
+  0x0049: "keycode.insert",
+  0x004a: "keycode.home",
+  0x004b: "keycode.pageUp",
+  0x004c: "keycode.delete",
+  0x004d: "keycode.end",
+  0x004e: "keycode.pageDown",
+  0x0053: "keycode.numLock",
+  0x007a: "keycode.mute",
+  0x007b: "keycode.volumeDown",
+  0x007c: "keycode.volumeUp",
+};
+
 /** A readable label for a keycode, falling back to its hex value. */
 export function labelFor(code: number): string {
+  const translationKey = LABEL_KEYS[code];
+  if (translationKey) return t(translationKey);
   return BY_CODE.get(code) ?? `0x${code.toString(16).padStart(4, "0")}`;
 }
 
@@ -196,7 +228,7 @@ export function keymapEditor(
       el("button", {
         type: "button",
         class: index === layer ? "layer-tab active" : "layer-tab",
-        text: `Layer ${index}`,
+        text: t("keymap.layer", { layer: index }),
         onclick: () => {
           editor.layer = index;
           editor.selected = null;
@@ -215,7 +247,7 @@ export function keymapEditor(
         type: "button",
         class: index === editor.selected ? "key active" : "key",
         text: shortLabelFor(code),
-        title: `Key ${index + 1} · ${labelFor(code)}`,
+        title: t("keymap.key", { index: index + 1, label: labelFor(code) }),
         onclick: () => {
           editor.selected = editor.selected === index ? null : index;
           actions.redraw();
@@ -226,7 +258,7 @@ export function keymapEditor(
 
   const children: HTMLElement[] = [
     el("div", { class: "keymap-head" }, [
-      el("span", { class: "muted", text: `${layers} layers · ${keys} keys per layer` }),
+      el("span", { class: "muted", text: t("keymap.layers", { layers, keys }) }),
       tabs,
     ]),
     grid,
@@ -237,18 +269,18 @@ export function keymapEditor(
     const current = codeAt(image, base + index);
     const select = el("select", { class: "keycode-picker" });
     for (const keycode of KEYCODES) {
-      const option = el("option", { value: String(keycode.code), text: keycode.label });
+      const option = el("option", { value: String(keycode.code), text: labelFor(keycode.code) });
       if (keycode.code === current) option.setAttribute("selected", "selected");
       select.append(option);
     }
     children.push(
       el("div", { class: "keymap-picker" }, [
-        el("span", { class: "muted", text: `Key ${index + 1}, layer ${layer}:` }),
+        el("span", { class: "muted", text: t("keymap.keyAt", { index: index + 1, layer }) }),
         select,
         el("button", {
           type: "button",
           class: "primary",
-          text: "Apply",
+          text: t("keymap.apply"),
           onclick: () => {
             const code = Number((select as HTMLSelectElement).value);
             const next = withCode(image, base + index, code);
@@ -258,7 +290,7 @@ export function keymapEditor(
         }),
         el("button", {
           type: "button",
-          text: "Cancel",
+          text: t("keymap.cancel"),
           onclick: () => {
             editor.selected = null;
             actions.redraw();
@@ -271,7 +303,7 @@ export function keymapEditor(
   children.push(
     el("p", {
       class: "muted keymap-note",
-      text: "Writes the whole keymap image: the adapter sends only the changed keycodes, reads them back, and restores the original image if the board disagrees. The pre-edit image is kept in %APPDATA%\\UniversalPeripheralHub\\keymap-backups.",
+      text: t("keymap.note"),
     }),
   );
 

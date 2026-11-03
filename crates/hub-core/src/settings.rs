@@ -21,6 +21,10 @@ pub struct Settings {
     /// wait seconds and stall the shared I2C bus for the other outputs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub ddc_blocked: Vec<String>,
+    /// Panel/tray preferences (language, auto scan, battery alerts, close
+    /// button). Defaults are applied by serde when the file predates them.
+    #[serde(default)]
+    pub prefs: crate::prefs::Prefs,
 }
 
 impl Default for Settings {
@@ -29,6 +33,7 @@ impl Default for Settings {
             schema_version: SCHEMA_VERSION,
             disabled_adapters: Vec::new(),
             ddc_blocked: Vec::new(),
+            prefs: crate::prefs::Prefs::default(),
         }
     }
 }

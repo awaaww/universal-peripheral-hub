@@ -5,7 +5,9 @@ use std::time::Instant;
 
 use hub_core::device::DeviceDescriptor;
 use hub_core::scene::ScenesFile;
-use hub_core::{CapabilityValue, Hub, HubError, Result, Settings, SettingsStore, WriteOutcome};
+use hub_core::{
+    prefs::Prefs, CapabilityValue, Hub, HubError, Result, Settings, SettingsStore, WriteOutcome,
+};
 use hub_proto::{
     ApplySceneParams, DevicesResult, HelloResult, ReadResult, ReloadParams, SceneMode,
     SceneRuntime, ScenesResult, SetBlockedParams, SetScenesParams, PROTOCOL_VERSION,
@@ -21,6 +23,7 @@ use crate::proc;
 pub enum Event {
     DevicesChanged(DevicesResult),
     ScenesChanged(ScenesResult),
+    PrefsChanged(hub_proto::PrefsResult),
 }
 
 pub struct Service {
@@ -31,6 +34,9 @@ pub struct Service {
     events: broadcast::Sender<Event>,
     started: Instant,
     ui: Option<PathBuf>,
+    /// Installed by `main` once the shutdown channel exists; `hub.shutdown`
+    /// fires it so the panel can stop the core instead of leaving an orphan.
+    shutdown: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
 }
 
 /// Hub access for the scene engine. Each call takes the lock only for the
@@ -334,7 +340,57 @@ impl Service {
             events,
             started: Instant::now(),
             ui,
+            shutdown: Mutex::new(None),
         })
+    }
+
+    /// Current panel/tray preferences. Cheap: one lock, one clone.
+    pub fn prefs(&self) -> Prefs {
+        self.settings
+            .lock()
+            .expect("settings mutex poisoned")
+            .settings()
+            .prefs
+            .clone()
+    }
+
+    /// Validate, persist and broadcast new preferences. The returned value is
+    /// what was actually stored, so the panel shows clamped values instead of
+    /// silently disagreeing with the file.
+    pub fn set_prefs(&self, prefs: Prefs) -> Result<hub_proto::PrefsResult> {
+        let normalized = prefs.normalized();
+        let stored = {
+            let mut store = self.settings.lock().expect("settings mutex poisoned");
+            store.update(|settings| settings.prefs = normalized)?;
+            store.settings().prefs.clone()
+        };
+        let result = hub_proto::PrefsResult { prefs: stored };
+        let _ = self.events.send(Event::PrefsChanged(result.clone()));
+        tracing::info!(
+            language = %result.prefs.language,
+            auto_scan_secs = result.prefs.auto_scan_secs,
+            battery_alert = result.prefs.battery_alert,
+            "preferences updated"
+        );
+        Ok(result)
+    }
+
+    /// Hand the shutdown channel to the service. Called once by `main`.
+    pub fn install_shutdown(&self, tx: tokio::sync::watch::Sender<bool>) {
+        *self.shutdown.lock().expect("shutdown mutex poisoned") = Some(tx);
+    }
+
+    /// Stop the core. The panel uses this when the user chose "quit" as the
+    /// close behaviour; the reply is written before the server loop ends.
+    pub fn request_shutdown(&self) {
+        if let Some(tx) = self
+            .shutdown
+            .lock()
+            .expect("shutdown mutex poisoned")
+            .as_ref()
+        {
+            let _ = tx.send(true);
+        }
     }
 
     pub fn hello(&self) -> HelloResult {

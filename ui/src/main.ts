@@ -2,14 +2,19 @@ import "./style.css";
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
+import { setLanguage, t } from "./i18n";
 import { render, type Actions, type UiState } from "./render";
+import { openSettings } from "./settings";
+import { DEFAULT_PREFS } from "./protocol";
 import type {
   AdapterState,
   CapabilityDescriptor,
   CapabilityValue,
   DeviceDescriptor,
   HubFailure,
+  Prefs,
   ScenesResult,
   Snapshot,
   WriteOutcome,
@@ -37,12 +42,51 @@ function call<T>(method: string, params: unknown): Promise<T> {
   return invoke<T>("hub_request", { method, params });
 }
 
+/**
+ * Cached preferences, kept in sync by `prefs.get` at boot, by the settings
+ * Save, and by the `prefs.changed` push. The close handler must answer
+ * synchronously, so it cannot await a read of its own.
+ */
+let prefs: Prefs = { ...DEFAULT_PREFS };
+
+function applyPrefs(next: Prefs): void {
+  prefs = next;
+  setLanguage(next.language);
+}
+
+async function loadPrefs(): Promise<void> {
+  try {
+    const result = await call<{ prefs: Prefs }>("prefs.get", {});
+    applyPrefs(result.prefs);
+    paint();
+  } catch (err) {
+    // An older hubd without prefs still works: the local defaults apply.
+    console.error("cannot load preferences", err);
+  }
+}
+
+function openSettingsModal(): void {
+  openSettings({
+    load: async () => {
+      const result = await call<{ prefs: Prefs }>("prefs.get", {});
+      applyPrefs(result.prefs);
+      paint();
+      return result.prefs;
+    },
+    save: async (next) => {
+      const result = await call<{ prefs: Prefs }>("prefs.set", { prefs: next });
+      applyPrefs(result.prefs);
+      paint();
+    },
+  });
+}
+
 function describe(err: unknown): HubFailure {
   if (typeof err === "string") return { message: err, retryable: false };
   if (err && typeof err === "object") {
     const failure = err as Partial<HubFailure>;
     return {
-      message: failure.message ?? "unknown error",
+      message: failure.message ?? t("error.unknown"),
       kind: failure.kind ?? null,
       retryable: Boolean(failure.retryable),
     };
@@ -226,7 +270,7 @@ function valueOf(capability: CapabilityDescriptor, value: CapabilityValue | unde
     case "int":
       return `${value.value}${capability.kind.type === "int" ? (capability.kind.unit ?? "") : ""}`;
     case "bool":
-      return value.value ? "On" : "Off";
+      return value.value ? t("control.on") : t("control.off");
     case "enum": {
       const option = capability.kind.type === "enum" ? capability.kind.options.find((o) => o.value === value.value) : undefined;
       return option?.label ?? value.value;
@@ -234,7 +278,7 @@ function valueOf(capability: CapabilityDescriptor, value: CapabilityValue | unde
     case "rgb":
       return `#${[value.value.r, value.value.g, value.value.b].map((n) => n.toString(16).padStart(2, "0")).join("")}`;
     case "bytes":
-      return `${value.value.length} bytes`;
+      return t("card.bytes", { count: value.value.length });
     case "text":
       return value.value.length > 0 ? value.value : "—";
   }
@@ -288,7 +332,7 @@ function write(device: DeviceDescriptor, capability: CapabilityDescriptor, value
   // Optimistic value: the slider keeps the position the user dragged to while
   // the write is on the wire.
   state.values.set(id, value);
-  setStatus(id, "Saving…", "saving");
+  setStatus(id, t("status.saving"), "saving");
   queueFor(device.id).set(capability.id, { device, capability, value });
   void drain(device.id);
 }
@@ -315,7 +359,7 @@ async function drain(deviceId: string): Promise<void> {
 
 async function send(item: PendingWrite): Promise<void> {
   const id = key(item.device.id, item.capability.id);
-  setStatus(id, "Saving…", "saving");
+  setStatus(id, t("status.saving"), "saving");
 
   let attempt = 0;
   for (;;) {
@@ -331,11 +375,11 @@ async function send(item: PendingWrite): Promise<void> {
       if (!superseded) {
         state.values.set(id, outcome.value);
         if (outcome.matched) {
-          setStatus(id, `Synced · read back ${valueOf(item.capability, outcome.value)}`, "ok");
+          setStatus(id, t("status.synced", { value: valueOf(item.capability, outcome.value) }), "ok");
         } else if (outcome.readback_error) {
-          setStatus(id, `Applied, read-back failed: ${outcome.readback_error}`, "error");
+          setStatus(id, t("status.readbackFailed", { error: outcome.readback_error }), "error");
         } else {
-          setStatus(id, `Device kept ${valueOf(item.capability, outcome.value)} instead`, "error");
+          setStatus(id, t("status.deviceKept", { value: valueOf(item.capability, outcome.value) }), "error");
         }
       }
       return;
@@ -346,7 +390,7 @@ async function send(item: PendingWrite): Promise<void> {
       // what happened instead of hiding the second failure.
       if (failure.retryable && attempt === 0) {
         attempt += 1;
-        setStatus(id, `Retrying after ${failure.kind ?? "error"}…`, "saving");
+        setStatus(id, t("status.retrying", { kind: failure.kind ?? "error" }), "saving");
         await new Promise((resolve) => setTimeout(resolve, 300));
         continue;
       }
@@ -395,10 +439,7 @@ async function setBlocked(target: BlockTarget, blocked: boolean): Promise<void> 
 }
 
 async function ignoreDevice(device: DeviceDescriptor): Promise<void> {
-  const question =
-    `Ignore “${device.name}”?\n\n` +
-    "Stop talking to this monitor. Use this for a KVM or splitter that hangs the DDC bus.\n\n" +
-    "You can restore it later from the adapters strip.";
+  const question = t("confirm.ignore", { name: device.name });
   if (!window.confirm(question)) return;
   await setBlocked({ device: device.id }, true);
 }
@@ -422,6 +463,7 @@ const actions: Actions = {
   toggleBlockedList: (adapterId) => toggleBlockedList(adapterId),
   applyScene: (sceneId) => void applyScene(sceneId),
   setSceneOption: (option, checked) => void setSceneOption(option, checked),
+  openSettings: () => openSettingsModal(),
   redraw: () => paint(),
 };
 
@@ -446,8 +488,52 @@ void listen<ScenesResult>("hub://scenes-changed", (event) => {
   console.error("cannot subscribe to scene changes", err);
 });
 
+void listen<{ prefs: Prefs }>("prefs.changed", (event) => {
+  // Another window (or the tray) saved preferences; adopt them without reload.
+  applyPrefs(event.payload.prefs);
+  paint();
+}).catch((err) => {
+  console.error("cannot subscribe to preference changes", err);
+});
+
+// The window close button hides to the tray or shuts the core down. Tauri
+// destroys the window as soon as the handler returns without preventDefault,
+// so that call happens before any await.
+try {
+  const appWindow = getCurrentWindow();
+  void appWindow
+    .onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (prefs.close_to_tray) {
+        try {
+          await appWindow.hide();
+        } catch (err) {
+          console.error("cannot hide the window to the tray", err);
+        }
+        return;
+      }
+      try {
+        await call("hub.shutdown", {});
+      } catch (err) {
+        console.error("hub shutdown failed", err);
+      }
+      try {
+        await appWindow.destroy();
+      } catch (err) {
+        console.error("cannot destroy the window", err);
+      }
+    })
+    .catch((err) => {
+      console.error("cannot intercept window close", err);
+    });
+} catch (err) {
+  // Plain-browser `npm run dev` has no Tauri window; the panel still runs.
+  console.error("cannot access the Tauri window", err);
+}
+
 window.addEventListener("unhandledrejection", (event) => {
   console.error("unhandled rejection", event.reason);
 });
 
+void loadPrefs();
 void refresh();

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use hub_proto::{
-    codes, method, ApplySceneParams, ReadParams, ReloadParams, Request, Response, RpcError,
-    SetBlockedParams, SetEnabledParams, SetScenesParams, WriteParams,
+    codes, method, ApplySceneParams, PrefsParams, ReadParams, ReloadParams, Request, Response,
+    RpcError, SetBlockedParams, SetEnabledParams, SetScenesParams, WriteParams,
 };
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -80,6 +80,31 @@ pub async fn dispatch(service: Arc<Service>, request: Request) -> Option<Respons
             },
             Err(err) => Response::failure(id, err),
         },
+        // Preferences are one small struct in memory; only writing them touches
+        // the disk.
+        method::PREFS_GET => success(
+            id,
+            &hub_proto::PrefsResult {
+                prefs: service.prefs(),
+            },
+        ),
+        method::PREFS_SET => match parse::<PrefsParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.set_prefs(params.prefs)).await {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        // Reply first, then stop: the panel needs the empty success to know the
+        // core accepted the request before it destroys its own window.
+        method::HUB_SHUTDOWN => {
+            let svc = Arc::clone(&service);
+            tokio::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+                svc.request_shutdown();
+            });
+            success(id, &serde_json::json!({}))
+        }
         // Reading the document is cheap (no device I/O), so it stays on the
         // async side; writing it touches the disk and possibly a monitor.
         method::SCENES_GET => success(id, &service.scenes()),

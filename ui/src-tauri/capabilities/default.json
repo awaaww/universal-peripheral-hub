@@ -1,7 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions the panel window needs: the core defaults (including event listen/unlisten) plus nothing else. The panel talks to hubd over its own named pipe, so no filesystem, shell, or http capability is granted.",
-  "windows": ["main"],
-  "permissions": ["core:default"]
+  "description": "Permissions the panel window needs: the core defaults (event listen/unlisten, single-instance focus) plus hiding the window for close-to-tray and destroying it when the user chose to quit. The panel talks to hubd over its own named pipe, so no filesystem, shell, or http capability is granted.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-hide",
+    "core:window:allow-destroy"
+  ]
 }

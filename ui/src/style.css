@@ -737,3 +737,164 @@ h3 {
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* Settings overlay ------------------------------------------------------- */
+body.modal-open {
+  overflow: hidden;
+}
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(6, 9, 13, 0.68);
+  backdrop-filter: blur(2px);
+}
+
+.modal {
+  width: min(460px, 100%);
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: linear-gradient(180deg, #171d25, #141920);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+.modal:focus {
+  outline: none;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.modal .select {
+  min-width: 180px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.field-label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.field-inline .select {
+  min-width: 120px;
+}
+
+.check-row,
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  cursor: pointer;
+}
+
+.check-row input,
+.radio-row input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 22px;
+}
+
+.input {
+  width: 88px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-row);
+  color: var(--text);
+  font: inherit;
+}
+
+.modal .select:disabled,
+.modal .input:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.modal-error {
+  margin: 0;
+  color: var(--error);
+  font-size: 12.5px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 2px;
+}
+
+.button-primary {
+  border-color: rgba(61, 220, 151, 0.5);
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.button-icon {
+  padding: 6px 9px;
+  font-size: 15px;
+  line-height: 1;
+}
+
+/* Battery ring ----------------------------------------------------------- */
+.card-title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.battery {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  line-height: 0;
+}
+
+.battery-ring {
+  display: block;
+}
+
+.battery-track {
+  stroke: rgba(230, 237, 243, 0.14);
+}
+
+.battery-number {
+  font-family: "Cascadia Code", "Consolas", ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+}

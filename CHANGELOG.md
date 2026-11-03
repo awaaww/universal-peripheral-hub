@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 — panel preferences
+
+### Added
+
+- Settings page in the panel: language (English, 简体中文, 繁體中文), close-button
+  behaviour (hide to the tray or quit), optional auto scan with a 15–300 s
+  interval, and low-battery alerts with a configurable threshold. The tray menu
+  and battery alerts follow the language preference.
+- `prefs.get` / `prefs.set` / `prefs.changed` over the pipe, backed by a `Prefs`
+  struct in `settings.json`; `hubd` normalizes out-of-range values before it
+  answers (D33).
+- `hub.shutdown` so the panel's "quit" close behaviour stops the core as well.
+- Auto scan runs inside `hubd` (5 s ticker) and reuses `adapters.reload`, so a
+  scheduled scan and the Rescan button cannot diverge.
+- Low-battery tray notifications with hysteresis: alert once below the threshold
+  and re-arm five points above it.
+
+### Changed
+
+- A device's battery percentage is now a small ring with the number next to the
+  device name; the battery row is gone. Other read-only integers render as plain
+  text instead of a disabled slider.
+- The tray icon is the application icon embedded from
+  `ui/src-tauri/icons/icon.ico` instead of the stock Windows icon.
+- Panel window no longer remembers being "always on top": it never was in the
+  configuration; the screenshots that looked that way raised the window
+  themselves.
+
+### Fixed
+
+- Closing the panel window did nothing visible: `core:window:allow-hide` and
+  `core:window:allow-destroy` were missing from the capability file, so the
+  close handler's `preventDefault()` left the window open.
+- Battery alerts ignored capabilities such as `battery.level` whose `cap_type`
+  does not end in `.battery`.
+
 ## 0.3.0 — M6 packaging and auto-start
 
 ### Added

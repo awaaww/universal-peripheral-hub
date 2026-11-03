@@ -4,12 +4,15 @@
 //! icon and the single-instance mutex. It survives the UI being closed and it is
 //! the only process that talks to devices.
 
+use std::collections::HashMap;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use hub_core::default_config_dir;
 use hub_core::Hub;
+use hub_proto::ReloadParams;
 use hubd::{foreground, foreground::ForegroundWatcher, proc, server, single, tray, ui, Service};
 use tokio::runtime::Runtime;
 
@@ -227,6 +230,99 @@ fn parse_adapter_flag(args: &[String]) -> std::result::Result<Option<String>, St
     Ok(adapter)
 }
 
+/// Periodic device work: optional auto scan, and battery alerts.
+///
+/// The loop ticks every five seconds and does nothing unless a preference asks
+/// for it. Scanning goes through `reload_adapters`, the same path the panel's
+/// Rescan button uses, so an auto scan cannot behave differently from a manual
+/// one.
+async fn background(service: Arc<Service>) {
+    let mut last_scan = Instant::now();
+    let mut last_battery = Instant::now();
+    let mut alerted: HashMap<String, bool> = HashMap::new();
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(5)).await;
+        let prefs = service.prefs();
+
+        match prefs.scan_interval() {
+            Some(interval) => {
+                if last_scan.elapsed() >= interval {
+                    last_scan = Instant::now();
+                    tracing::info!(secs = interval.as_secs(), "auto scan: rebuilding adapters");
+                    let svc = Arc::clone(&service);
+                    let outcome = tokio::task::spawn_blocking(move || {
+                        svc.reload_adapters(&ReloadParams { adapter: None })
+                    })
+                    .await;
+                    if let Ok(Err(err)) = outcome {
+                        tracing::warn!(error = %err, "auto scan failed");
+                    }
+                }
+            }
+            None => last_scan = Instant::now(),
+        }
+
+        if prefs.battery_alert && last_battery.elapsed() >= Duration::from_secs(30) {
+            last_battery = Instant::now();
+            let svc = Arc::clone(&service);
+            let readings = tokio::task::spawn_blocking(move || battery_readings(&svc))
+                .await
+                .unwrap_or_default();
+            for (device, name, percent) in readings {
+                let already = alerted.get(&device).copied().unwrap_or(false);
+                if percent <= prefs.battery_alert_percent && !already {
+                    tray::battery_alert(&prefs.language, &name, percent);
+                    alerted.insert(device, true);
+                } else if percent > prefs.battery_alert_percent.saturating_add(5) {
+                    // Re-arm once the battery recovered, so a later drop alerts
+                    // again instead of staying silent forever.
+                    alerted.insert(device, false);
+                }
+            }
+        }
+    }
+}
+
+/// Read every battery percentage the hub currently exposes. A missing or
+/// unreadable device is skipped: alerts are best-effort, the panel is where the
+/// details live.
+fn battery_readings(service: &Service) -> Vec<(String, String, u8)> {
+    let mut out = Vec::new();
+    for device in service.snapshot().devices {
+        let has_battery = device.capabilities.iter().any(|capability| {
+            capability.cap_type.contains("battery")
+                && matches!(
+                    capability.kind,
+                    hub_core::CapabilityKind::Int { unit: Some(ref unit), .. } if unit == "%"
+                )
+        });
+        if !has_battery {
+            continue;
+        }
+        let Some(capability) = device
+            .capabilities
+            .iter()
+            .find(|capability| capability.cap_type.contains("battery"))
+        else {
+            continue;
+        };
+        match service.read(&device.id, &capability.id) {
+            Ok(result) => {
+                if let hub_core::CapabilityValue::Int(percent) = result.value {
+                    out.push((
+                        device.id.clone(),
+                        device.name.clone(),
+                        percent.clamp(0, 100) as u8,
+                    ));
+                }
+            }
+            Err(err) => tracing::debug!(device = %device.id, error = %err, "battery read failed"),
+        }
+    }
+    out
+}
+
 fn serve(_guard: single::InstanceGuard) -> ExitCode {
     let config_dir = default_config_dir();
     if let Err(err) = std::fs::create_dir_all(&config_dir) {
@@ -268,6 +364,9 @@ fn serve(_guard: single::InstanceGuard) -> ExitCode {
     };
 
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    // `hub.shutdown` (the panel's "quit" close behaviour) needs the same channel
+    // the tray menu uses.
+    service.install_shutdown(shutdown_tx.clone());
     match tray::spawn(Arc::clone(&service), shutdown_tx) {
         Ok(()) => tracing::info!("tray icon ready"),
         Err(err) => eprintln!("hubd: tray icon unavailable ({err}); continuing without it"),
@@ -280,6 +379,11 @@ fn serve(_guard: single::InstanceGuard) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+
+    // Auto scan and battery alerts: deliberately one loop, because both are
+    // "look at the devices every now and then" and two timers would fight over
+    // the same adapter locks.
+    runtime.spawn(background(Arc::clone(&service)));
 
     let pipe = hub_proto::pipe_name();
     let result = runtime.block_on(server::serve(&pipe, service, shutdown_rx));
