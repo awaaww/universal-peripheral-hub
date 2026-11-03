@@ -354,3 +354,25 @@ model, and the hub's read-back guarantee would be bypassed); a per-key capabilit
 "test key" control (a fake feature). The panel keymap view is selected by
 `cap_type == "keyboard.keymap"`, never by device id, so another keyboard adapter
 that advertises the same capability gets the same editor.
+
+## D32 — Auto-start is a per-user `Run` value, not a scheduled task
+
+`hubd --autostart on` writes
+`HKCU\Software\Microsoft\Windows\CurrentVersion\Run\UniversalPeripheralHub` with
+the quoted path of `hubd.exe`; `off` deletes it; `status` reads it back. The tray
+menu carries the same toggle ("Start with Windows") and shows a check mark when
+the value points at the running executable.
+
+Rejected alternative: a Task Scheduler entry at logon. It buys a delay and a
+"run with highest privileges" flag we do not need — the core talks to HID and
+DDC devices as the logged-in user — while costing a UAC prompt on install and
+an extra artifact (a `schtasks` XML file) that users cannot inspect easily. A
+per-user `Run` value is visible in Task Manager's Startup tab, needs no
+elevation, and is removed by the uninstaller. If a future adapter needs
+elevation it gets its own opt-in prompt; the core never starts elevated.
+
+The installer registers auto-start for the current user only (`installMode:
+currentUser`), and the uninstaller removes the value before it kills the
+processes. `hubd` starts with no arguments from both the installer and the Run
+key, so it hides its own console window at startup; the CLI modes keep the
+console.

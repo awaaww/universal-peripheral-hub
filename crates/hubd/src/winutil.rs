@@ -18,3 +18,21 @@ pub fn copy_wide<const N: usize>(target: &mut [u16; N], value: &str) {
     target.fill(0);
     target[..wide.len()].copy_from_slice(&wide);
 }
+
+/// Hide the console window of this process.
+///
+/// `hubd` is a console subsystem binary so that `--selftest` and friends can
+/// print to a terminal. When the installer or the Run key starts it with no
+/// arguments there is no terminal to print to, and Windows would otherwise leave
+/// a black console window on screen for the lifetime of the process.
+pub fn hide_console_window() {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+
+    let console = unsafe { GetConsoleWindow() };
+    if console != 0 {
+        unsafe {
+            ShowWindow(console, SW_HIDE);
+        }
+    }
+}

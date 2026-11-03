@@ -1,8 +1,8 @@
 name: Release
 
-# Skeleton only. M0 produces unsigned, unpackaged binaries as workflow
-# artifacts. Installer packaging, signing and the update channel land in M6;
-# until then this workflow must not claim to produce a supported release.
+# Builds the per-user NSIS installer on a tag. The artifact is unsigned: the
+# workflow uploads it as a build artifact and deliberately does not create a
+# GitHub release until code signing is in place.
 on:
   push:
     tags: ["v*"]
@@ -31,23 +31,25 @@ jobs:
           npm ci
           npm run build
 
-      - name: Build binaries
+      - name: Build core and adapter helpers
         run: |
           cargo build --release -p hubd
-          cargo build --release -p universal-peripheral-hub --features custom-protocol
+          cargo build --release -p adapter-atk
+          cargo build --release -p adapter-via
 
-      - name: Collect artifacts
+      - name: Stage sidecars for the installer
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item target/release/hubd.exe dist/
-          Copy-Item target/release/universal-peripheral-hub.exe dist/
-          Compress-Archive -Path dist/* -DestinationPath universal-peripheral-hub-${{ github.ref_name }}-x64-unsigned.zip
+          New-Item -ItemType Directory -Force ui/src-tauri/bin | Out-Null
+          Copy-Item target/release/hubd.exe ui/src-tauri/bin/
+          Copy-Item target/release/atk-adapter.exe ui/src-tauri/bin/
+          Copy-Item target/release/via-adapter.exe ui/src-tauri/bin/
+
+      - name: Build the installer
+        working-directory: ui
+        run: npx tauri build
 
       - uses: actions/upload-artifact@v4
         with:
-          name: universal-peripheral-hub-${{ github.ref_name }}-x64-unsigned
-          path: universal-peripheral-hub-*.zip
-
-      # Deliberately no `gh release create` yet: an unsigned, unpackaged zip is
-      # not something a user should be told to install.
+          name: universal-peripheral-hub-installer
+          path: target/release/bundle/nsis/*.exe

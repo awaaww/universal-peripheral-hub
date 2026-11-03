@@ -19,8 +19,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu, DestroyWindow,
     DispatchMessageW, GetCursorPos, GetMessageW, LoadCursorW, LoadIconW, PostMessageW,
     PostQuitMessage, RegisterClassExW, SetForegroundWindow, TrackPopupMenu, TranslateMessage,
-    MF_SEPARATOR, MF_STRING, MSG, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND,
-    WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+    MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP,
+    WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
 use crate::service::Service;
@@ -29,7 +29,8 @@ use crate::winutil::{copy_wide, to_wide};
 const TRAY_MESSAGE: u32 = WM_APP + 1;
 const ID_OPEN: u32 = 1001;
 const ID_TOGGLE: u32 = 1002;
-const ID_QUIT: u32 = 1003;
+const ID_AUTOSTART: u32 = 1003;
+const ID_QUIT: u32 = 1004;
 
 struct TrayContext {
     service: Arc<Service>,
@@ -157,6 +158,7 @@ unsafe extern "system" fn wndproc(
             match (wparam & 0xFFFF) as u32 {
                 ID_OPEN => activate(),
                 ID_TOGGLE => toggle_mock(),
+                ID_AUTOSTART => toggle_autostart(),
                 ID_QUIT => quit(),
                 _ => {}
             }
@@ -188,6 +190,24 @@ fn toggle_mock() {
         .unwrap_or(true);
     if let Err(err) = context.service.set_enabled("mock", !enabled) {
         tracing::warn!(error = %err, "cannot toggle the mock adapter");
+    }
+}
+
+/// Flips the per-user Run value. The tray is the only UI for this in M6, so a
+/// failure has to be visible in the log (and the menu re-reads the registry on
+/// the next open, which shows the true state).
+fn toggle_autostart() {
+    let enabled = crate::autostart::is_enabled();
+    let exe = match std::env::current_exe() {
+        Ok(exe) => exe,
+        Err(err) => {
+            tracing::warn!(error = %err, "cannot resolve the hubd path for autostart");
+            return;
+        }
+    };
+    match crate::autostart::set(!enabled, &exe) {
+        Ok(now) => tracing::info!(enabled = now, "autostart updated"),
+        Err(err) => tracing::warn!(error = %err, "cannot update the autostart value"),
     }
 }
 
@@ -238,6 +258,19 @@ unsafe fn show_menu(hwnd: HWND) {
         "Enable Mock adapter"
     });
     AppendMenuW(menu, MF_STRING, ID_TOGGLE as usize, toggle.as_ptr());
+    AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
+    let autostart = to_wide("Start with Windows");
+    let autostart_flags = if crate::autostart::is_enabled() {
+        MF_STRING | MF_CHECKED
+    } else {
+        MF_STRING
+    };
+    AppendMenuW(
+        menu,
+        autostart_flags,
+        ID_AUTOSTART as usize,
+        autostart.as_ptr(),
+    );
     AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
     let quit_label = to_wide("Quit Universal Peripheral Hub");
     AppendMenuW(menu, MF_STRING, ID_QUIT as usize, quit_label.as_ptr());

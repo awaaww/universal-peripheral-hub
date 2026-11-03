@@ -26,7 +26,7 @@ descriptors rather than hard-coded per vendor.
 > running in our tests. If the mouse control collection goes silent (the vendor
 > tool holding it, or an idle wireless mouse), the panel says so and `Rescan`
 > rebuilds the adapters; moving the mouse once is usually enough. Auto-start and
-> installers are not implemented yet — see the roadmap.
+> a per-user installer ship with 0.3.0; code signing does not.
 
 ## Status / roadmap
 
@@ -38,7 +38,7 @@ descriptors rather than hard-coded per vendor.
 | M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read + keymap editing; headset not) |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
 | M5 | Session recording / replay | not implemented |
-| M6 | Packaging, auto-start, signing | not implemented |
+| M6 | Packaging, auto-start, signing | **partial** (unsigned per-user NSIS installer, auto-start) |
 | M7 | Public release | not implemented |
 
 ## Architecture in one paragraph
@@ -66,6 +66,38 @@ docs/               architecture, decisions, adapter protocol
 data/monitors/      per-EDID monitor overrides (SKG2725.json = KTC H27T22S)
 data/scenes.example.json  documented example scene document
 ```
+
+## Install
+
+The per-user installer from the release page
+(`Universal Peripheral Hub_*_x64-setup.exe`) needs no elevation: it unpacks the
+core and the adapters into `%LOCALAPPDATA%\Universal Peripheral Hub\`, registers
+auto-start for the current user and starts the tray process. Uninstalling
+removes the program and the auto-start value but keeps
+`%APPDATA%\UniversalPeripheralHub\` (settings, scenes, keymap backups) so a
+reinstall picks up where it left off.
+
+Auto-start is a per-user `Run` value. Toggle it from the tray menu
+("Start with Windows") or headlessly:
+
+```powershell
+hubd.exe --autostart on
+hubd.exe --autostart status
+hubd.exe --autostart off
+```
+
+To build the installer yourself:
+
+```powershell
+cd ui
+npm run build
+npm run tauri build
+# -> target\release\bundle\nsis\Universal Peripheral Hub_<version>_x64-setup.exe
+```
+
+`ui/src-tauri/bin/` must contain `hubd.exe`, `atk-adapter.exe` and
+`via-adapter.exe` (release builds). The NSIS bundler is downloaded by the Tauri
+CLI on first use; it needs about 3 MB of disk and no network afterwards.
 
 ## Build and run
 

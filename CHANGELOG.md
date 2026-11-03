@@ -4,9 +4,20 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.3.0 — M6 packaging and auto-start
 
 ### Added
+
+- Per-user NSIS installer (`ui/src-tauri/tauri.conf.json` + `installer-hooks.nsh`):
+  bundles the core and both adapter helpers, installs under
+  `%LOCALAPPDATA%\Universal Peripheral Hub\`, registers auto-start for the current
+  user and starts the tray process. Uninstalling removes the program, the
+  processes and the auto-start value but keeps `%APPDATA%\UniversalPeripheralHub\`.
+- `hubd --autostart on|off|status` and a "Start with Windows" tray item, backed
+  by the per-user `Run` value (see D32).
+- `hubd` hides its own console window when it starts with no arguments, so the
+  installer and the Run key do not leave a black console on screen; the CLI
+  modes keep it.
 
 - Out-of-process adapters: `ProcAdapter` in `hubd` speaks the stdio JSON-RPC
   dialect from `docs/adapter-protocol.md` to a child process, with a 3 s

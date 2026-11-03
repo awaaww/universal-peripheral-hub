@@ -21,6 +21,12 @@ fn main() -> ExitCode {
     init_tracing();
     let args: Vec<String> = std::env::args().skip(1).collect();
 
+    // Started by the installer or the Run key: no terminal, and Windows would
+    // keep a console window around for the whole session.
+    if args.is_empty() {
+        hubd::winutil::hide_console_window();
+    }
+
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         print_help();
         return ExitCode::SUCCESS;
@@ -69,6 +75,16 @@ fn main() -> ExitCode {
     if args.iter().any(|arg| arg == "--version") {
         println!("hubd {}", env!("CARGO_PKG_VERSION"));
         return ExitCode::SUCCESS;
+    }
+
+    if let Some(action) = parse_autostart_flag(&args) {
+        return match run_autostart(action) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("hubd: autostart: {err:#}");
+                ExitCode::FAILURE
+            }
+        };
     }
     if let Some(adapter) = adapter {
         // Silently ignoring the flag here would make an acceptance run look
@@ -157,6 +173,41 @@ fn selftest_proc(
 
 /// Parse `--adapter <id>` / `--adapter=<id>`. A missing value is a usage error
 /// rather than something to skip, so it is reported before anything runs.
+/// `--autostart on|off|status`: the installer and the tray menu call this so the
+/// registry value is written by the same code that reads it.
+fn parse_autostart_flag(args: &[String]) -> Option<&str> {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "--autostart" {
+            return iter.next().map(String::as_str);
+        }
+        if let Some(value) = arg.strip_prefix("--autostart=") {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn run_autostart(action: &str) -> Result<()> {
+    let exe = std::env::current_exe().context("resolving the hubd executable path")?;
+    match action {
+        "on" => {
+            hubd::autostart::enable(&exe).context("writing the Run value")?;
+            println!("autostart on: {}", hubd::autostart::command(&exe));
+        }
+        "off" => {
+            hubd::autostart::disable().context("deleting the Run value")?;
+            println!("autostart off");
+        }
+        "status" => match hubd::autostart::command_line(hubd::autostart::VALUE_NAME) {
+            Some(raw) => println!("autostart on: {raw}"),
+            None => println!("autostart off"),
+        },
+        other => bail!("--autostart expects `on`, `off` or `status`, not `{other}`"),
+    }
+    Ok(())
+}
+
 fn parse_adapter_flag(args: &[String]) -> std::result::Result<Option<String>, String> {
     let mut adapter = None;
     let mut iter = args.iter();
@@ -293,6 +344,8 @@ fn print_help() {
          Check the out-of-process ATK adapter and print every capability value\n  \
          --adapter <id>         With --selftest: `mock` (default), `atk` or `via`\n  \
          --version              Print the version and exit\n  \
+         --autostart <on|off|status>\n                       \
+         Read or write the per-user Run value (HKCU, no elevation)\n  \
          --help                 Print this help and exit\n\n\
          Without options hubd starts the resident core: named pipe, adapters and tray icon.\n\
          Starting it twice asks the running instance to open the panel.",
