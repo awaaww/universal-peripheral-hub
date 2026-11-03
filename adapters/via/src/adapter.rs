@@ -36,12 +36,35 @@ const CAP_LAYERS: &str = "keyboard.layers";
 const CAP_KEYS: &str = "keyboard.keys";
 const CAP_MACROS: &str = "keyboard.macros";
 
+/// Time the firmware needs before a keymap write is visible to a read.
+const WRITE_SETTLE_MS: u64 = 300;
+/// Read attempts after a write: the first read can return the pre-write page.
+const WRITE_READ_ATTEMPTS: u32 = 3;
+/// Keycodes used by the write self-test (F13/F14: unused on this layout).
+const KEYCODE_F13: u16 = 0x0068;
+const KEYCODE_F14: u16 = 0x0069;
+
 /// One enumerated device: the transport handle description plus the descriptor
 /// and the derived key count that `keyboard.keys` reports.
 struct DeviceState {
     raw: RawDevice,
+    layers: u8,
     keys: u16,
     descriptor: DeviceDescriptor,
+}
+
+/// Outcome of the headless write round-trip: write one spare keycode on the
+/// last layer, read it back, restore the original, read that back too.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct WriteSelftest {
+    pub device: String,
+    pub layer: u8,
+    pub offset: u16,
+    pub original: u16,
+    pub written: u16,
+    pub read_back: Option<u16>,
+    pub restored: Option<u16>,
+    pub ok: bool,
 }
 
 /// Transport-independent adapter core.
@@ -86,7 +109,7 @@ impl<T: Transport> Core<T> {
                 continue;
             }
             match self.probe(&raw) {
-                Ok(keys) => {
+                Ok((layers, keys)) => {
                     let descriptor = describe(id.clone(), &raw);
                     if let Err(error) = descriptor.validate() {
                         tracing::warn!(device = %id, %error, "VIA: descriptor rejected");
@@ -98,6 +121,7 @@ impl<T: Transport> Core<T> {
                         id,
                         DeviceState {
                             raw,
+                            layers,
                             keys,
                             descriptor,
                         },
@@ -194,7 +218,7 @@ impl<T: Transport> Core<T> {
     ///
     /// The device is exposed only when every query that shapes a capability
     /// succeeded and decoded to a value inside the advertised range.
-    fn probe(&mut self, device: &RawDevice) -> Result<u16> {
+    fn probe(&mut self, device: &RawDevice) -> Result<(u8, u16)> {
         self.transport.open(device)?;
 
         let version = self.query(
@@ -231,7 +255,7 @@ impl<T: Transport> Core<T> {
                 format!("derived key count {keys} is outside 1..=256"),
             ));
         }
-        Ok(keys)
+        Ok((layers, keys))
     }
 
     /// Walk the keymap in [`protocol::PAGE_BYTES`] pages until the first empty
@@ -261,6 +285,90 @@ impl<T: Transport> Core<T> {
             offset += protocol::PAGE_BYTES;
         }
         Ok(keymap_bytes / 2 / u16::from(layers))
+    }
+
+    /// Headless write round-trip on the last keymap layer.
+    ///
+    /// Returns the outcome instead of failing on a mismatch: the caller decides
+    /// whether a wrong read-back is an error. The original keycode is always
+    /// restored, even when the write or the verification failed.
+    pub fn write_selftest(&mut self) -> Result<WriteSelftest> {
+        let (id, raw, layers, keys) = {
+            let (id, state) = self
+                .devices
+                .iter()
+                .next()
+                .ok_or_else(|| HubError::unsupported("no VIA keyboard is enumerated"))?;
+            (id.clone(), state.raw.clone(), state.layers, state.keys)
+        };
+        self.transport.open(&raw)?;
+
+        let layer = layers;
+        let layer_bytes = usize::from(keys) * 2;
+        let offset = u16::try_from(layer_bytes * usize::from(layer.saturating_sub(1)))
+            .map_err(|_| HubError::internal("keymap offset overflows u16"))?;
+
+        let original_page = self.read_page(offset)?;
+        let original = protocol::decode_u16(&original_page[0..2]);
+        let written = if original == KEYCODE_F13 {
+            KEYCODE_F14
+        } else {
+            KEYCODE_F13
+        };
+
+        self.set_page(offset, &protocol::encode_u16(written))?;
+        let read_back = self
+            .read_page_settled(offset)
+            .ok()
+            .map(|page| protocol::decode_u16(&page[0..2]));
+
+        // Restore before reporting, so an early `?` cannot leave the board modified.
+        let restore = self.set_page(offset, &protocol::encode_u16(original));
+        let restored = self
+            .read_page_settled(offset)
+            .ok()
+            .map(|page| protocol::decode_u16(&page[0..2]));
+        restore?;
+
+        Ok(WriteSelftest {
+            device: id,
+            layer,
+            offset,
+            original,
+            written,
+            read_back,
+            restored,
+            ok: read_back == Some(written) && restored == Some(original),
+        })
+    }
+
+    /// Read one keymap page, retrying the transient pre-write content.
+    fn read_page_settled(&mut self, offset: u16) -> Result<Vec<u8>> {
+        let mut last = self.read_page(offset)?;
+        for _ in 1..WRITE_READ_ATTEMPTS {
+            std::thread::sleep(Duration::from_millis(WRITE_SETTLE_MS));
+            last = self.read_page(offset)?;
+        }
+        Ok(last)
+    }
+
+    fn read_page(&mut self, offset: u16) -> Result<Vec<u8>> {
+        let size = page_size();
+        self.query(&protocol::get_keymap_buffer(offset, size), |reply| {
+            protocol::decode_keymap(reply, offset, size)
+        })
+    }
+
+    fn set_page(&mut self, offset: u16, data: &[u8]) -> Result<()> {
+        if data.len() > protocol::MAX_SET_BYTES {
+            return Err(HubError::invalid_value(format!(
+                "keymap write of {} bytes exceeds the {} byte frame limit",
+                data.len(),
+                protocol::MAX_SET_BYTES
+            )));
+        }
+        self.transport
+            .write_frame(&protocol::set_keymap_buffer(offset, data))
     }
 
     /// Send one request and read the matching reply.
@@ -436,6 +544,12 @@ impl ViaAdapter {
             core: Core::new(WindowsHid::new()),
         }
     }
+
+    /// Enumerate, then run the write round-trip on the last keymap layer.
+    pub fn write_selftest(&mut self) -> Result<WriteSelftest> {
+        self.core.enumerate()?;
+        self.core.write_selftest()
+    }
 }
 
 impl Adapter for ViaAdapter {
@@ -579,6 +693,121 @@ mod tests {
         device
             .capability(id)
             .unwrap_or_else(|| panic!("missing capability `{id}`"))
+    }
+
+    /// A transport that owns a mutable keymap, so the write round-trip can be
+    /// tested without a board: `0x12` reads the buffer, `0x13` patches it.
+    struct KeymapTransport {
+        keymap: Vec<u8>,
+        layers: u8,
+        apply_writes: bool,
+        writes: Vec<Vec<u8>>,
+    }
+
+    impl KeymapTransport {
+        fn new(layers: u8, keymap: Vec<u8>) -> Self {
+            Self {
+                keymap,
+                layers,
+                apply_writes: true,
+                writes: Vec::new(),
+            }
+        }
+    }
+
+    impl Transport for KeymapTransport {
+        fn devices(&mut self) -> Result<Vec<RawDevice>> {
+            Ok(vec![board()])
+        }
+
+        fn open(&mut self, _device: &RawDevice) -> Result<()> {
+            Ok(())
+        }
+
+        fn write_frame(&mut self, frame: &[u8]) -> Result<()> {
+            self.writes.push(frame.to_vec());
+            if frame[1] == protocol::CMD_KEYMAP_SET_BUFFER && self.apply_writes {
+                let offset = usize::from(u16::from_be_bytes([frame[2], frame[3]]));
+                let size = usize::from(frame[4]);
+                self.keymap[offset..offset + size].copy_from_slice(&frame[5..5 + size]);
+            }
+            Ok(())
+        }
+
+        fn read_frame(&mut self, _timeout_ms: u32) -> Result<Vec<u8>> {
+            let last = *self
+                .writes
+                .last()
+                .and_then(|frame| frame.get(1))
+                .unwrap_or(&0);
+            match last {
+                CMD_PROTOCOL_VERSION => reply(CMD_PROTOCOL_VERSION, &[0x00, 0x01]),
+                CMD_LAYER_COUNT => reply(CMD_LAYER_COUNT, &[self.layers]),
+                CMD_MACRO_COUNT => reply(CMD_MACRO_COUNT, &[8]),
+                CMD_KEYMAP_BUFFER => {
+                    let frame = self.writes.last().expect("a request was written");
+                    let offset = u16::from_be_bytes([frame[2], frame[3]]);
+                    let size = frame[4];
+                    let start = usize::from(offset);
+                    let end = start + usize::from(size);
+                    keymap_reply(offset, size, &self.keymap[start..end])
+                }
+                other => Err(HubError::internal(format!(
+                    "unexpected command 0x{other:02x}"
+                ))),
+            }
+        }
+    }
+
+    fn writable_core() -> Core<KeymapTransport> {
+        let mut keymap = vec![0u8; usize::from(MAX_KEYMAP_BYTES)];
+        for chunk in keymap.chunks_mut(2) {
+            chunk.copy_from_slice(&protocol::encode_u16(0x0001));
+        }
+        let mut core = Core::new(KeymapTransport::new(4, keymap));
+        core.enumerate().expect("enumerate");
+        core
+    }
+
+    #[test]
+    fn write_selftest_writes_reads_back_and_restores() {
+        let mut core = writable_core();
+        let report = core.write_selftest().expect("write selftest");
+        assert!(report.ok, "{report:?}");
+        assert_eq!(report.layer, 4);
+        assert_eq!(report.offset, 0x0240);
+        assert_eq!(report.original, 0x0001);
+        assert_eq!(report.written, KEYCODE_F13);
+        assert_eq!(report.read_back, Some(KEYCODE_F13));
+        assert_eq!(report.restored, Some(0x0001));
+
+        let keymap = &core.transport.keymap;
+        assert_eq!(protocol::decode_u16(&keymap[0x0240..0x0242]), 0x0001);
+        let set_frames: Vec<_> = core
+            .transport
+            .writes
+            .iter()
+            .filter(|frame| frame[1] == protocol::CMD_KEYMAP_SET_BUFFER)
+            .collect();
+        assert_eq!(set_frames.len(), 2, "one write plus one restore");
+    }
+
+    #[test]
+    fn write_selftest_reports_mismatch_but_still_restores() {
+        let mut core = writable_core();
+        core.transport.apply_writes = false;
+        let report = core.write_selftest().expect("write selftest");
+        assert!(!report.ok);
+        assert_eq!(report.read_back, Some(0x0001));
+        assert_eq!(report.restored, Some(0x0001));
+        assert_eq!(
+            core.transport
+                .writes
+                .iter()
+                .filter(|frame| frame[1] == protocol::CMD_KEYMAP_SET_BUFFER)
+                .count(),
+            2
+        );
     }
 
     #[test]

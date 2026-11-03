@@ -27,8 +27,11 @@ fn main() -> anyhow::Result<()> {
     match std::env::args().nth(1).as_deref() {
         None => serve(),
         Some("--probe") => probe(),
+        Some("--write-selftest") => write_selftest(),
         Some(other) => {
-            anyhow::bail!("unexpected argument `{other}` (usage: via-adapter [--probe])")
+            anyhow::bail!(
+                "unexpected argument `{other}` (usage: via-adapter [--probe|--write-selftest])"
+            )
         }
     }
 }
@@ -360,5 +363,35 @@ fn value_summary(value: &CapabilityValue) -> String {
         CapabilityValue::Rgb(value) => value.to_hex(),
         CapabilityValue::Bytes(value) => format!("{} bytes", value.len()),
         CapabilityValue::Text(value) => format!("\"{value}\""),
+    }
+}
+
+/// `--write-selftest`: prove the keymap write path, then put the board back.
+///
+/// This is deliberately headless: the write transport was unverified when the
+/// adapter shipped, and a self-test that restores the original keycode is safer
+/// than a UI control whose semantics nobody has agreed on yet.
+fn write_selftest() -> anyhow::Result<()> {
+    let mut adapter = ViaAdapter::new();
+    let devices = adapter.enumerate()?;
+    if devices.is_empty() {
+        anyhow::bail!("no VIA keyboard is connected");
+    }
+    let report = adapter.write_selftest()?;
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if report.ok {
+        println!(
+            "write round-trip ok: layer {}, offset 0x{:03x}, 0x{:04x} -> 0x{:04x} -> restored 0x{:04x}",
+            report.layer, report.offset, report.original, report.written,
+            report.restored.unwrap_or(0),
+        );
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "write round-trip failed: wrote 0x{:04x}, read back {:?}, restored {:?}",
+            report.written,
+            report.read_back,
+            report.restored
+        )
     }
 }

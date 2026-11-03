@@ -143,6 +143,28 @@ pub fn get_keymap_buffer(offset: u16, size: u8) -> Vec<u8> {
 
 /// Decode a big-endian keycode. A short slice decodes as `0` rather than
 /// panicking; the reply decoders check their lengths before calling this.
+/// Set a slice of the dynamic keymap (`0x13`).
+///
+/// The firmware accepts at most [`MAX_SET_BYTES`] per frame and this command
+/// does not answer, so a successful write is not proof of anything: always read
+/// the buffer back. VIA stores keycodes big-endian, two bytes per key.
+pub const CMD_KEYMAP_SET_BUFFER: u8 = 0x13;
+pub const MAX_SET_BYTES: usize = 32;
+
+pub fn set_keymap_buffer(offset: u16, data: &[u8]) -> Vec<u8> {
+    let [offset_hi, offset_lo] = offset.to_be_bytes();
+    let mut arguments = Vec::with_capacity(3 + data.len());
+    arguments.push(offset_hi);
+    arguments.push(offset_lo);
+    arguments.push(u8::try_from(data.len()).unwrap_or(u8::MAX));
+    arguments.extend_from_slice(data);
+    request(CMD_KEYMAP_SET_BUFFER, &arguments)
+}
+
+pub fn encode_u16(value: u16) -> [u8; 2] {
+    value.to_be_bytes()
+}
+
 pub fn decode_u16(buffer: &[u8]) -> u16 {
     match buffer {
         [hi, lo, ..] => u16::from_be_bytes([*hi, *lo]),
@@ -444,4 +466,21 @@ mod tests {
         let frame = reply(CMD_LAYER_COUNT, &[0x00, 0x00, 0x04]);
         assert_protocol(decode_keymap(&frame, 0, 4));
     }
+}
+
+#[test]
+fn set_keymap_frame_carries_offset_size_and_keys() {
+    let frame = set_keymap_buffer(0x0240, &[0x00, 0x68]);
+    assert_eq!(frame.len(), REPORT_LEN);
+    assert_eq!(frame[0], REPORT_ID);
+    assert_eq!(frame[1], CMD_KEYMAP_SET_BUFFER);
+    assert_eq!(&frame[2..5], &[0x02, 0x40, 0x02]);
+    assert_eq!(&frame[5..7], &[0x00, 0x68]);
+    assert!(frame[7..].iter().all(|byte| *byte == 0));
+}
+
+#[test]
+fn keycodes_are_encoded_big_endian() {
+    assert_eq!(encode_u16(0x0068), [0x00, 0x68]);
+    assert_eq!(encode_u16(0x7820), [0x78, 0x20]);
 }

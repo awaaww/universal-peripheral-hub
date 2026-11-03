@@ -413,3 +413,18 @@ macros, and is read-only until the keymap and lighting write paths are verified.
 
 ATK HUB polls the same collection while it runs; replies that do not echo the
 expected command are discarded and the read waits for the real one.
+
+### Writing the keymap
+
+`0x13` (set keymap buffer) takes the same `offset_hi, offset_lo, size` prefix
+followed by the keycode bytes, and it writes: a spare slot on layer 4 changed
+from `0x0001` (`KC_TRNS`) to `0x0068` (`KC_F13`) and read back as `0x0068`, then
+restored to `0x0001`. Two quirks matter:
+
+- the command has **no reply frame**, so a successful write is not proof;
+- the first `0x12` read after a write can return the pre-write page, so the
+  verification must wait (~300 ms) and retry rather than fail immediately.
+
+`adapters/via` implements this as `--write-selftest` and does not advertise a
+writable capability yet: remapping needs a key-matrix editor, not a single test
+key.

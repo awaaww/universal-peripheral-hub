@@ -31,6 +31,9 @@ All notable changes to this project are documented here. The format follows
   changes a setting is ever sent.
 - `hubd --selftest --adapter via`, and `UPH_VIA_ADAPTER` for an explicit helper
   path (the ATK helper keeps `UPH_ATK_ADAPTER`).
+- `via-adapter --write-selftest`: writes one keycode on the last keymap layer,
+  verifies the read-back, restores the original and exits non-zero on a
+  mismatch. The panel does not expose key remapping yet (see D30).
 - `docs/re/atk-hub.md`: the protocol research record (frame layout, EEPROM map,
   what the vendor binaries actually do, and what is still unknown).
 - `device.set_blocked` RPC and a panel control to stop talking to a monitor

@@ -15,8 +15,10 @@ descriptors rather than hard-coded per vendor.
 > writable. Numeric DPI is not advertised because the firmware does not expose
 > the per-slot values. The keyboard adapter (`adapters/via`) speaks VIA/QMK and
 > reports the protocol version, keymap layer count, key count (96 on the RS7 Air)
-> and macro count; it is read-only in this milestone, and keymap or lighting
-> writes are not implemented. The headset uses a separate channel (USB audio plus
+> and macro count; the panel keeps it read-only in this milestone. The keymap
+> write transport is implemented and verified by `via-adapter --write-selftest`
+> (write one keycode, read it back, restore it), but there is no remap editor yet
+> and lighting writes are not implemented. The headset uses a separate channel (USB audio plus
 > a serial port) and is *not implemented* rather than faked.
 > ATK HUB does not have to be closed: reads returned real values while it was
 > running in our tests. If the mouse control collection goes silent (the vendor

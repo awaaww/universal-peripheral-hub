@@ -321,3 +321,19 @@ verified 768-byte window after it (the board's last page is `KC_NO`, so a strict
 `keys = bytes / 2 / layers`. The adapter advertises only values it can actually
 decode — protocol version, layers, keys, macros — and `write()` returns
 `unsupported` instead of offering a control the firmware cannot honour.
+
+## D30 — The VIA write path is proven headlessly before it gets a UI
+
+`0x13` (set keymap buffer) does write on the RS7 Air, but it has no reply frame
+and the first read after a write can return the pre-write page. The adapter
+therefore waits 300 ms and re-reads up to three times, and `via-adapter
+--write-selftest` performs the whole round-trip on the last keymap layer: read a
+spare slot, write `KC_F13`, read back, restore the original keycode, read back,
+and exit non-zero on any mismatch. The restore is issued even when the write is
+not visible, so a failed experiment cannot leave a key remapped.
+
+No writable capability is advertised yet. Remapping is a per-key editor (96 keys
+times 4 layers), and the panel has no key matrix UI; exposing one arbitrary
+"test key" control would be a fake feature. The transport, settle and restore
+rules are documented and tested, so the editor can be added without reopening
+the protocol question.
