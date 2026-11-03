@@ -438,3 +438,34 @@ the image back and restores the original on a mismatch. The first edit copies th
 pre-edit image to `%APPDATA%\UniversalPeripheralHub\keymap-backups\`. Verified
 on the RS7 Air: layer 4 key 1 `KC_TRNS` -> `KC_F13` -> read back `KC_F13` ->
 restored `KC_TRNS`, backup file present with `0x0001` at offset `0x240`.
+
+## Headset (N9 Ultra): the vendor SDK, not a HID protocol
+
+The dongle (`373B:1204`) exposes four interfaces: `MI_00` USB audio, `MI_03` a
+vendor HID collection (`FF02:0002`, 65-byte in and out reports), `MI_04` consumer
+control, and `MI_05` a CDC serial port (`COM3`).
+
+What we observed, read-only, with ATK HUB running:
+
+- `COM3` belongs to the dongle (`USB\VID_373B&PID_1204&MI_05`, "ATK N9 Ultra dongle").
+  Opening it from another process fails with access denied: the vendor stack keeps
+  the port open, so it is not a channel we can share.
+- `MI_03` accepts 65-byte output reports but never answers the ATK mouse query
+  frames (`0x04` battery, `0x03` online, `0x12` version) within 600 ms, and has no
+  feature reports. It is a different command set, not a second mouse.
+- The renderer's headset page does not talk to the HID collection for control. It
+  calls a local HTTP SDK at `http://127.0.0.1:52339` (`/device-init`, and
+  `/device/headset/...` for the feature pages), behind a driver install and
+  restart flow (`installDriver`, `initDriver`, `stopDriverService`,
+  `sdk-restart-overlay`). Volume and mute go through `window.loudness`, i.e. the
+  Windows audio endpoint, not the dongle.
+- No vendor SDK DLL ships next to the app: the only executables are `ATK HUB.exe`,
+  `atk-hub-service.exe` (a HID helper: `hid list|check|listen`, packet rules) and
+  `elevate.exe`. The HTTP SDK is launched by the app on demand.
+
+Conclusion: headset control is a closed SDK plus a kernel driver, not a protocol we
+can reimplement from the device side. Speaking the SDK's HTTP dialect would still
+require ATK's driver and service to be installed, which defeats the point of a hub
+that replaces the vendor software. The honest scope is therefore: no headset
+capabilities in this milestone. Device presence is visible through the audio
+endpoint, but it is not something the hub should pretend to control.
