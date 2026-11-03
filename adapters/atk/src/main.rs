@@ -304,17 +304,22 @@ fn probe() -> anyhow::Result<()> {
         }
         println!();
         for cap in &device.capabilities {
+            let access = if cap.access.can_write() {
+                "read/write"
+            } else {
+                "read-only "
+            };
             let value = adapter.read(&device.id, &cap.id);
             match value {
                 Ok(value) => println!(
-                    "  {:<14} {:<30} read-only {:>4} ms  => {}",
+                    "  {:<14} {:<30} {access} {:>4} ms  => {}",
                     cap.id,
                     kind_summary(&cap.kind),
                     cap.cost.latency_ms,
                     value_summary(&value)
                 ),
                 Err(error) => println!(
-                    "  {:<14} {:<30} read-only {:>4} ms  => error: {error}",
+                    "  {:<14} {:<30} {access} {:>4} ms  => error: {error}",
                     cap.id,
                     kind_summary(&cap.kind),
                     cap.cost.latency_ms

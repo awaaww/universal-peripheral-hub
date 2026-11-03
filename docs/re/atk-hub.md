@@ -374,3 +374,15 @@ Numeric DPI stays unavailable: the per-slot blocks at `0x0C/0x14/0x1C/0x24`
 answer `0xFF` (length 6/8) or ten zero bytes plus the echoed address (length
 12) on this firmware, so there is no honest number to show. The adapter exposes
 the slot only.
+
+### Hardware round-trip (2026-11-03, 8K NANO dongle, ATK HUB running)
+
+| what | before | write | read back | restore | read back |
+| --- | --- | --- | --- | --- | --- |
+| report rate | 250 Hz | 1000 Hz | 1000 Hz, `matched=true` | 250 Hz | 250 Hz |
+| DPI slot | 1 | 2 | 2, `matched=true` | 1 | 1 |
+
+Both writes went through `hubd` (not the probe binary) and the panel showed
+`Synced · read back 1000 Hz` / `Synced · read back 250 Hz`. ATK HUB was running
+throughout, which confirms the write path does not require closing it; a silent
+collection still surfaces as `mouse.conflict` rather than a fake value.
