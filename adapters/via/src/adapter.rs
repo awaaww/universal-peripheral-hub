@@ -35,11 +35,16 @@ const CAP_PROTOCOL: &str = "keyboard.protocol";
 const CAP_LAYERS: &str = "keyboard.layers";
 const CAP_KEYS: &str = "keyboard.keys";
 const CAP_MACROS: &str = "keyboard.macros";
+const CAP_KEYMAP: &str = "keyboard.keymap";
+/// Latency budget for the full keymap image (24 pages each way).
+const KEYMAP_LATENCY_MS: u32 = 220;
 
 /// Time the firmware needs before a keymap write is visible to a read.
 const WRITE_SETTLE_MS: u64 = 300;
 /// Read attempts after a write: the first read can return the pre-write page.
 const WRITE_READ_ATTEMPTS: u32 = 3;
+/// Where the original keymap image is kept before the first edit.
+const BACKUP_DIR: &str = "UniversalPeripheralHub/keymap-backups";
 /// Keycodes used by the write self-test (F13/F14: unused on this layout).
 const KEYCODE_F13: u16 = 0x0068;
 const KEYCODE_F14: u16 = 0x0069;
@@ -71,6 +76,8 @@ pub struct WriteSelftest {
 pub struct Core<T: Transport> {
     transport: T,
     devices: BTreeMap<String, DeviceState>,
+    /// The pre-edit image is backed up once per process, before the first write.
+    backup_done: bool,
 }
 
 impl<T: Transport> Core<T> {
@@ -78,6 +85,7 @@ impl<T: Transport> Core<T> {
         Self {
             transport,
             devices: BTreeMap::new(),
+            backup_done: false,
         }
     }
 
@@ -160,6 +168,7 @@ impl<T: Transport> Core<T> {
 
         self.transport.open(&raw)?;
         match capability {
+            CAP_KEYMAP => Ok(CapabilityValue::Bytes(self.read_full_keymap()?)),
             CAP_PROTOCOL => {
                 let version = self.query(
                     &protocol::get_protocol_version(),
@@ -201,16 +210,81 @@ impl<T: Transport> Core<T> {
         }
     }
 
-    /// The VIA adapter is read-only in this milestone: no frame that changes a
-    /// setting is ever sent.
-    pub fn write(
-        &mut self,
-        _device: &str,
-        _capability: &str,
-        _value: &CapabilityValue,
-    ) -> Result<()> {
-        Err(HubError::unsupported(
-            "the VIA adapter is read-only in this milestone",
+    /// Write the whole keymap image.
+    ///
+    /// The host writes the complete buffer, so the adapter can diff it against
+    /// what the board currently holds: only edited keycodes travel, then the
+    /// image is read back and compared. A mismatch restores the original image
+    /// before returning `transient`, so a half-applied edit cannot survive.
+    pub fn write(&mut self, device: &str, capability: &str, value: &CapabilityValue) -> Result<()> {
+        if capability != CAP_KEYMAP {
+            return Err(HubError::unsupported(format!(
+                "VIA writes are limited to `{CAP_KEYMAP}`, not `{capability}`"
+            )));
+        }
+        let CapabilityValue::Bytes(desired) = value else {
+            return Err(HubError::invalid_value(
+                "a keymap write takes a `bytes` value",
+            ));
+        };
+
+        let (raw, layers, keys) = {
+            let state = self.devices.get(device).ok_or_else(|| {
+                HubError::unknown_device(format!("unknown VIA device `{device}`"))
+            })?;
+            (state.raw.clone(), state.layers, state.keys)
+        };
+        let expected = protocol::keymap_len(layers, keys)
+            .ok_or_else(|| HubError::internal("keymap length overflows on this keyboard"))?;
+        if desired.len() != expected {
+            return Err(HubError::invalid_value(format!(
+                "keymap image is {} bytes, this keyboard's keymap is {expected}",
+                desired.len()
+            )));
+        }
+
+        self.transport.open(&raw)?;
+        let current = self.read_full_keymap()?;
+        if &current == desired {
+            return Ok(());
+        }
+
+        if !self.backup_done {
+            // Tests must not write into the developer's profile; the backup is
+            // exercised on real hardware (see docs/re/atk-hub.md).
+            if !cfg!(test) {
+                match write_keymap_backup(device, &current) {
+                    Some(path) => {
+                        tracing::info!(path = %path.display(), "VIA: keymap backup written")
+                    }
+                    None => tracing::warn!("VIA: could not write a keymap backup"),
+                }
+            }
+            self.backup_done = true;
+        }
+
+        for (offset, chunk) in protocol::diff_runs(&current, desired, protocol::MAX_SET_BYTES) {
+            self.set_page(offset, &chunk)?;
+        }
+
+        if self.read_full_keymap_settled(desired)? {
+            return Ok(());
+        }
+
+        // Put the board back the way it was before reporting the mismatch.
+        match self.read_full_keymap() {
+            Ok(applied) => {
+                for (offset, chunk) in
+                    protocol::diff_runs(&applied, &current, protocol::MAX_SET_BYTES)
+                {
+                    let _ = self.set_page(offset, &chunk);
+                }
+            }
+            Err(error) => tracing::warn!(%error, "VIA: could not read back before restoring"),
+        }
+        Err(HubError::new(
+            ErrorKind::Transient,
+            "keyboard did not apply the keymap; the original image was restored",
         ))
     }
 
@@ -342,6 +416,44 @@ impl<T: Transport> Core<T> {
         })
     }
 
+    /// Read the whole keymap image, page by page.
+    fn read_full_keymap(&mut self) -> Result<Vec<u8>> {
+        let (layers, keys) = {
+            let state = self
+                .devices
+                .values()
+                .next()
+                .ok_or_else(|| HubError::unsupported("no VIA keyboard is enumerated"))?;
+            (state.layers, state.keys)
+        };
+        let length = protocol::keymap_len(layers, keys)
+            .ok_or_else(|| HubError::internal("keymap length overflows on this keyboard"))?;
+        let mut image = Vec::with_capacity(length);
+        let mut offset = 0u16;
+        while image.len() < length {
+            let remaining = length - image.len();
+            let size = page_size().min(u8::try_from(remaining).unwrap_or(u8::MAX));
+            let page = self.query(&protocol::get_keymap_buffer(offset, size), |reply| {
+                protocol::decode_keymap(reply, offset, size)
+            })?;
+            image.extend_from_slice(&page[..usize::from(size)]);
+            offset += u16::from(size);
+        }
+        image.truncate(length);
+        Ok(image)
+    }
+
+    /// Re-read the image until it matches `desired`, or the attempts run out.
+    fn read_full_keymap_settled(&mut self, desired: &[u8]) -> Result<bool> {
+        for _ in 0..WRITE_READ_ATTEMPTS {
+            std::thread::sleep(Duration::from_millis(WRITE_SETTLE_MS));
+            if self.read_full_keymap()? == desired {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// Read one keymap page, retrying the transient pre-write content.
     fn read_page_settled(&mut self, offset: u16) -> Result<Vec<u8>> {
         let mut last = self.read_page(offset)?;
@@ -450,24 +562,64 @@ fn path_token(path: &str) -> String {
     }
 }
 
+/// Copy the pre-edit keymap into the user's config directory.
+///
+/// Written with `std::fs` rather than a dependency: this is a plain `bytes`
+/// file, and the directory is the same one `hubd` uses for settings.
+fn write_keymap_backup(device: &str, image: &[u8]) -> Option<std::path::PathBuf> {
+    let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from)?;
+    let directory = base.join(BACKUP_DIR);
+    std::fs::create_dir_all(&directory).ok()?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    let token = device.split(':').nth(1).unwrap_or("keyboard");
+    let path = directory.join(format!("via-{token}-{stamp}.bin"));
+    std::fs::write(&path, image).ok()?;
+    Some(path)
+}
+
 fn capability(
     id: &str,
     label: &str,
     kind: CapabilityKind,
     latency_ms: u32,
 ) -> CapabilityDescriptor {
+    capability_with(id, label, kind, latency_ms, Access::ReadOnly)
+}
+
+fn capability_with(
+    id: &str,
+    label: &str,
+    kind: CapabilityKind,
+    latency_ms: u32,
+    access: Access,
+) -> CapabilityDescriptor {
     CapabilityDescriptor {
         id: id.to_string(),
         cap_type: id.to_string(),
         label: label.to_string(),
         kind,
-        access: Access::ReadOnly,
+        access,
         cost: Cost {
             latency_ms,
             side_effects: Vec::new(),
         },
         traits: Traits::default(),
     }
+}
+
+fn keymap_capability() -> CapabilityDescriptor {
+    capability_with(
+        CAP_KEYMAP,
+        "Keymap (layers x keys)",
+        CapabilityKind::Bytes {
+            max_len: u32::from(protocol::MAX_KEYMAP_BYTES),
+        },
+        KEYMAP_LATENCY_MS,
+        Access::ReadWrite,
+    )
 }
 
 fn describe(id: String, raw: &RawDevice) -> DeviceDescriptor {
@@ -523,6 +675,7 @@ fn describe(id: String, raw: &RawDevice) -> DeviceDescriptor {
                 },
                 LATENCY_MS,
             ),
+            keymap_capability(),
         ],
     }
 }
@@ -769,6 +922,70 @@ mod tests {
         core
     }
 
+    fn keymap_of(core: &mut Core<KeymapTransport>) -> Vec<u8> {
+        let id = core.devices.keys().next().expect("a device").clone();
+        match core.read(&id, CAP_KEYMAP).expect("read keymap") {
+            CapabilityValue::Bytes(bytes) => bytes,
+            other => panic!("expected bytes, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn keymap_write_patches_one_key_and_reads_it_back() {
+        let mut core = writable_core();
+        let id = core.devices.keys().next().expect("a device").clone();
+        let mut image = keymap_of(&mut core);
+        protocol::patch_keycode(&mut image, 4, 96, 1, 0, KEYCODE_F13).expect("patch");
+        core.write(&id, CAP_KEYMAP, &CapabilityValue::Bytes(image.clone()))
+            .expect("write keymap");
+        assert_eq!(keymap_of(&mut core), image);
+
+        let sets: Vec<_> = core
+            .transport
+            .writes
+            .iter()
+            .filter(|frame| frame[1] == protocol::CMD_KEYMAP_SET_BUFFER)
+            .collect();
+        assert_eq!(sets.len(), 1, "only the edited keycode travels");
+        assert_eq!(sets[0][4], 2, "a two-byte keycode, not the whole image");
+    }
+
+    #[test]
+    fn keymap_write_rejects_a_wrong_length() {
+        let mut core = writable_core();
+        let id = core.devices.keys().next().expect("a device").clone();
+        let error = core
+            .write(&id, CAP_KEYMAP, &CapabilityValue::Bytes(vec![0; 10]))
+            .expect_err("wrong length must fail");
+        assert_eq!(error.kind, ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn keymap_write_restores_when_the_device_ignores_it() {
+        let mut core = writable_core();
+        core.transport.apply_writes = false;
+        let id = core.devices.keys().next().expect("a device").clone();
+        let mut image = keymap_of(&mut core);
+        protocol::patch_keycode(&mut image, 4, 96, 2, 3, KEYCODE_F13).expect("patch");
+        let error = core
+            .write(&id, CAP_KEYMAP, &CapabilityValue::Bytes(image))
+            .expect_err("an ignored write must fail");
+        assert_eq!(error.kind, ErrorKind::Transient);
+        let after = keymap_of(&mut core);
+        assert_eq!(
+            protocol::decode_u16(&after[0x240 + 6..0x240 + 8]),
+            0x0001,
+            "the original keycode survived"
+        );
+        assert!(
+            core.transport
+                .writes
+                .iter()
+                .any(|frame| frame[1] == protocol::CMD_KEYMAP_SET_BUFFER),
+            "the adapter tried to write and then to restore"
+        );
+    }
+
     #[test]
     fn write_selftest_writes_reads_back_and_restores() {
         let mut core = writable_core();
@@ -831,7 +1048,7 @@ mod tests {
     }
 
     #[test]
-    fn enumerate_advertises_the_four_read_only_capabilities() {
+    fn enumerate_advertises_the_capabilities() {
         let (_core, devices) = enumerated(full_replies(4, 8, &full_keymap()));
         let device = &devices[0];
         let ids: Vec<&str> = device
@@ -839,9 +1056,17 @@ mod tests {
             .iter()
             .map(|capability| capability.id.as_str())
             .collect();
-        assert_eq!(ids, vec![CAP_PROTOCOL, CAP_LAYERS, CAP_KEYS, CAP_MACROS]);
+        assert_eq!(
+            ids,
+            vec![CAP_PROTOCOL, CAP_LAYERS, CAP_KEYS, CAP_MACROS, CAP_KEYMAP]
+        );
         for advertised in &device.capabilities {
-            assert_eq!(advertised.access, Access::ReadOnly);
+            let expected = if advertised.id == CAP_KEYMAP {
+                Access::ReadWrite
+            } else {
+                Access::ReadOnly
+            };
+            assert_eq!(advertised.access, expected);
             assert_eq!(advertised.cap_type, advertised.id);
         }
         assert_eq!(
@@ -1071,7 +1296,7 @@ mod tests {
     }
 
     #[test]
-    fn write_is_rejected_with_the_read_only_message() {
+    fn write_to_a_read_only_capability_is_rejected() {
         let (mut core, _devices) = enumerated(full_replies(4, 8, &full_keymap()));
         let writes_before = core.transport.writes.len();
         let error = core
@@ -1080,7 +1305,7 @@ mod tests {
         assert_eq!(error.kind, ErrorKind::Unsupported);
         assert_eq!(
             error.message,
-            "the VIA adapter is read-only in this milestone"
+            "VIA writes are limited to `keyboard.keymap`, not `keyboard.layers`"
         );
         assert_eq!(core.transport.writes.len(), writes_before);
     }

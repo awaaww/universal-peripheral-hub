@@ -428,3 +428,13 @@ restored to `0x0001`. Two quirks matter:
 `adapters/via` implements this as `--write-selftest` and does not advertise a
 writable capability yet: remapping needs a key-matrix editor, not a single test
 key.
+
+### Editing from the panel
+
+`keyboard.keymap` is advertised as a read/write `bytes` capability. The panel
+renders a layer tab strip, one button per key and a keycode picker; applying an
+edit writes the whole image, the adapter sends only the changed keycodes, reads
+the image back and restores the original on a mismatch. The first edit copies the
+pre-edit image to `%APPDATA%\UniversalPeripheralHub\keymap-backups\`. Verified
+on the RS7 Air: layer 4 key 1 `KC_TRNS` -> `KC_F13` -> read back `KC_F13` ->
+restored `KC_TRNS`, backup file present with `0x0001` at offset `0x240`.

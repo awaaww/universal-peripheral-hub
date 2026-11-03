@@ -1,4 +1,5 @@
 import { clear, el } from "./dom";
+import { keymapEditor } from "./keymap";
 import type {
   AdapterState,
   CapabilityDescriptor,
@@ -45,6 +46,8 @@ export interface Actions {
   toggleBlockedList(adapterId: string): void;
   applyScene(sceneId: string): void;
   setSceneOption(option: "allow_side_effects" | "startup_apply", checked: boolean): void;
+  /** Re-render from the current state without touching the hub. */
+  redraw(): void;
 }
 
 function key(device: string, capability: string): string {
@@ -442,6 +445,16 @@ function capabilityRow(
     feedback.append(el("span", { class: "muted", text: "write-only" }));
   } else {
     feedback.append(el("span", { class: "muted", text: value === undefined ? "reading…" : "read back from device" }));
+  }
+
+  if (capability.cap_type === "keyboard.keymap" && value?.type === "bytes") {
+    return el("div", { class: "row row-wide" }, [
+      el("div", { class: "row-info" }, [title, el("div", { class: "cap-meta" }, meta)]),
+      el("div", { class: "row-control" }, [
+        keymapEditor(device, capability, value, state, actions),
+        feedback,
+      ]),
+    ]);
   }
 
   return el("div", { class: "row" }, [

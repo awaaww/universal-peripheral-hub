@@ -31,6 +31,10 @@ All notable changes to this project are documented here. The format follows
   changes a setting is ever sent.
 - `hubd --selftest --adapter via`, and `UPH_VIA_ADAPTER` for an explicit helper
   path (the ATK helper keeps `UPH_ATK_ADAPTER`).
+- Keymap editor in the panel: layer tabs, a button per key, a keycode picker,
+  and a whole-image write through `keyboard.keymap`. Only edited keycodes travel;
+  the adapter reads the image back, restores it on a mismatch, and keeps the
+  pre-edit image in `%APPDATA%\UniversalPeripheralHub\keymap-backups\`.
 - `via-adapter --write-selftest`: writes one keycode on the last keymap layer,
   verifies the read-back, restores the original and exits non-zero on a
   mismatch. The panel does not expose key remapping yet (see D30).

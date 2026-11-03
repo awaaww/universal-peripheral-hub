@@ -662,3 +662,78 @@ h3 {
     align-items: flex-start;
   }
 }
+
+/* Keymap editor ---------------------------------------------------------- */
+.row-wide {
+  display: block;
+}
+.row-wide .row-control {
+  margin-top: 8px;
+}
+.keymap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.keymap-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.keymap-layers {
+  display: flex;
+  gap: 6px;
+}
+.layer-tab {
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+.layer-tab.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.keymap-grid {
+  display: grid;
+  grid-template-columns: repeat(16, minmax(0, 1fr));
+  gap: 4px;
+}
+.keymap-grid .key {
+  padding: 6px 2px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg-soft, rgba(255, 255, 255, 0.03));
+  color: var(--fg);
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.keymap-grid .key:hover {
+  border-color: var(--accent);
+}
+.keymap-grid .key.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.keymap-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.keycode-picker {
+  min-width: 180px;
+}
+.keymap-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}

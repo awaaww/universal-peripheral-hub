@@ -337,3 +337,20 @@ times 4 layers), and the panel has no key matrix UI; exposing one arbitrary
 "test key" control would be a fake feature. The transport, settle and restore
 rules are documented and tested, so the editor can be added without reopening
 the protocol question.
+
+## D31 — The keymap is edited as one `bytes` capability, not a private RPC
+
+The editor writes the complete keymap image (`4 layers x 96 keys x 2 bytes =
+768 bytes`) through `capability.write` on `keyboard.keymap`, a `Bytes` capability
+advertised as read/write. The adapter diffs that image against the board, sends
+only the changed keycodes in frames of at most 32 bytes, waits, reads the image
+back, and restores the original if the read-back disagrees. The pre-edit image is
+copied to `%APPDATA%\UniversalPeripheralHub\keymap-backups\` once per helper process,
+before the first frame.
+
+Rejected alternatives: one RPC per key (a second protocol next to the capability
+model, and the hub's read-back guarantee would be bypassed); a per-key capability
+(96 capabilities on one device, and scene code would have to know key names); a
+"test key" control (a fake feature). The panel keymap view is selected by
+`cap_type == "keyboard.keymap"`, never by device id, so another keyboard adapter
+that advertises the same capability gets the same editor.

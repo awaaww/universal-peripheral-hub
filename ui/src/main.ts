@@ -422,6 +422,7 @@ const actions: Actions = {
   toggleBlockedList: (adapterId) => toggleBlockedList(adapterId),
   applyScene: (sceneId) => void applyScene(sceneId),
   setSceneOption: (option, checked) => void setSceneOption(option, checked),
+  redraw: () => paint(),
 };
 
 function paint(): void {

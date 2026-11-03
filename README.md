@@ -15,10 +15,12 @@ descriptors rather than hard-coded per vendor.
 > writable. Numeric DPI is not advertised because the firmware does not expose
 > the per-slot values. The keyboard adapter (`adapters/via`) speaks VIA/QMK and
 > reports the protocol version, keymap layer count, key count (96 on the RS7 Air)
-> and macro count; the panel keeps it read-only in this milestone. The keymap
-> write transport is implemented and verified by `via-adapter --write-selftest`
-> (write one keycode, read it back, restore it), but there is no remap editor yet
-> and lighting writes are not implemented. The headset uses a separate channel (USB audio plus
+> and macro count, and exposes the keymap itself: the panel shows one button per
+> key, a keycode picker, and writes the edited image back through the normal
+> capability path (4 layers x 96 keys). Only changed keycodes are sent; the
+> adapter reads the image back and restores the original if the board disagrees,
+> and keeps the pre-edit image in `%APPDATA%\UniversalPeripheralHub\keymap-backups\`. Lighting is not
+> implemented: this firmware answers the lighting read with `0xFF`. The headset uses a separate channel (USB audio plus
 > a serial port) and is *not implemented* rather than faked.
 > ATK HUB does not have to be closed: reads returned real values while it was
 > running in our tests. If the mouse control collection goes silent (the vendor
@@ -33,7 +35,7 @@ descriptors rather than hard-coded per vendor.
 | M0 | Tauri shell, `hubd`, adapter host, mock adapter, RPC, CI | **done** |
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
-| M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read-only; headset not) |
+| M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read + keymap editing; headset not) |
 | M4 | Full panel UI | partial (descriptor-driven controls) |
 | M5 | Session recording / replay | not implemented |
 | M6 | Packaging, auto-start, signing | not implemented |
@@ -119,6 +121,11 @@ Both exit non-zero when the helper binary is missing or no device answers.
 Configuration lives in `%APPDATA%\UniversalPeripheralHub\settings.json`. Writes
 are atomic; an unparsable file is preserved as `settings.json.corrupt-<timestamp>`
 and replaced with defaults.
+
+The first keymap edit copies the board's keymap image (768 bytes) to
+`%APPDATA%\UniversalPeripheralHub\keymap-backups\via-<serial>-<timestamp>.bin`
+before any frame is sent. Restoring a backup is a manual `keyboard.keymap` write:
+the file is the raw big-endian keymap, no header.
 
 ## Design principles
 

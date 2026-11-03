@@ -161,6 +161,82 @@ pub fn set_keymap_buffer(offset: u16, data: &[u8]) -> Vec<u8> {
     request(CMD_KEYMAP_SET_BUFFER, &arguments)
 }
 
+/// Bytes a full keymap image occupies, or `None` on overflow.
+pub fn keymap_len(layers: u8, keys: u16) -> Option<usize> {
+    usize::from(keys)
+        .checked_mul(2)?
+        .checked_mul(usize::from(layers))
+}
+
+/// Byte offset of `key` on `layer`, rejecting an out-of-range address.
+#[cfg(test)]
+pub fn keycode_offset(layers: u8, keys: u16, layer: u8, key: u16) -> Result<usize> {
+    if layer == 0 || layer > layers {
+        return Err(protocol(format!("layer {layer} is outside 1..={layers}")));
+    }
+    if key >= keys {
+        return Err(protocol(format!("key {key} is outside 0..{keys}")));
+    }
+    Ok(((usize::from(layer) - 1) * usize::from(keys) + usize::from(key)) * 2)
+}
+
+/// Copy `code` into a keymap image at `layer`/`key`.
+#[cfg(test)]
+pub fn patch_keycode(
+    keymap: &mut [u8],
+    layers: u8,
+    keys: u16,
+    layer: u8,
+    key: u16,
+    code: u16,
+) -> Result<()> {
+    let offset = keycode_offset(layers, keys, layer, key)?;
+    let end = offset + 2;
+    let slot = keymap
+        .get_mut(offset..end)
+        .ok_or_else(|| protocol(format!("keymap image is shorter than offset {offset}")))?;
+    slot.copy_from_slice(&encode_u16(code));
+    Ok(())
+}
+
+/// Contiguous byte runs that differ between two keymap images, aligned to
+/// keycode boundaries and split into frames of at most `limit` bytes.
+///
+/// The firmware applies a write at a byte offset, so unchanged bytes never need
+/// to travel; only keycodes the user actually edited do.
+pub fn diff_runs(current: &[u8], next: &[u8], limit: usize) -> Vec<(u16, Vec<u8>)> {
+    let len = current.len().min(next.len());
+    let limit = limit.max(2) & !1;
+    let mut runs = Vec::new();
+    let mut start: Option<usize> = None;
+    for index in 0..=len {
+        let differs = index < len && current[index] != next[index];
+        match (differs, start) {
+            (true, None) => start = Some(index),
+            (false, Some(begin)) => {
+                let begin = begin & !1;
+                let mut end = index;
+                if end % 2 == 1 && end < len {
+                    end += 1;
+                }
+                let mut offset = begin;
+                while offset < end {
+                    let take = (end - offset).min(limit);
+                    if let (Ok(address), Some(chunk)) =
+                        (u16::try_from(offset), next.get(offset..offset + take))
+                    {
+                        runs.push((address, chunk.to_vec()));
+                    }
+                    offset += take;
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    runs
+}
+
 pub fn encode_u16(value: u16) -> [u8; 2] {
     value.to_be_bytes()
 }
@@ -483,4 +559,49 @@ fn set_keymap_frame_carries_offset_size_and_keys() {
 fn keycodes_are_encoded_big_endian() {
     assert_eq!(encode_u16(0x0068), [0x00, 0x68]);
     assert_eq!(encode_u16(0x7820), [0x78, 0x20]);
+}
+
+#[test]
+fn patch_keycode_lands_on_the_right_slot() {
+    let mut keymap = vec![0u8; keymap_len(4, 96).unwrap()];
+    patch_keycode(&mut keymap, 4, 96, 2, 3, 0x0068).unwrap();
+    let offset = keycode_offset(4, 96, 2, 3).unwrap();
+    assert_eq!(&keymap[offset..offset + 2], &[0x00, 0x68]);
+    assert!(patch_keycode(&mut keymap, 4, 96, 5, 3, 0x68).is_err());
+    assert!(patch_keycode(&mut keymap, 4, 96, 1, 96, 0x68).is_err());
+}
+
+#[test]
+fn diff_runs_emits_only_changed_keycodes() {
+    let base = vec![0u8; 768];
+    let mut next = base.clone();
+    next[0x240..0x242].copy_from_slice(&[0x00, 0x68]);
+    let runs = diff_runs(&base, &next, MAX_SET_BYTES);
+    assert_eq!(runs.len(), 1);
+    assert_eq!(runs[0].0, 0x240);
+    assert_eq!(runs[0].1, vec![0x00, 0x68]);
+}
+
+#[test]
+fn diff_runs_merges_neighbours_and_splits_long_runs() {
+    let base = vec![0u8; 64];
+    let mut next = base.clone();
+    next[0..6].copy_from_slice(&[1, 1, 1, 1, 1, 1]);
+    let runs = diff_runs(&base, &next, 32);
+    assert_eq!(runs, vec![(0u16, vec![1, 1, 1, 1, 1, 1])]);
+
+    let mut long = base.clone();
+    long[0..40].fill(1);
+    let runs = diff_runs(&base, &long, MAX_SET_BYTES);
+    assert_eq!(runs.len(), 2);
+    assert_eq!(runs[0].0, 0);
+    assert_eq!(runs[0].1.len(), 32);
+    assert_eq!(runs[1].0, 32);
+    assert_eq!(runs[1].1.len(), 8);
+}
+
+#[test]
+fn identical_images_have_no_runs() {
+    let image = vec![7u8; 768];
+    assert!(diff_runs(&image, &image, MAX_SET_BYTES).is_empty());
 }
