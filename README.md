@@ -8,7 +8,7 @@ described by adapters as a set of typed **capabilities** (brightness, polling
 rate, RGB, HDR, ...); the UI and the scene engine are generated from those
 descriptors rather than hard-coded per vendor.
 
-> **Status: M3 (partial).** Panel, resident core, DDC/CI adapter, scene engine
+> **Status: M4 (partial).** Panel, resident core, DDC/CI adapter, scene engine
 > and two out-of-process ATK adapters are implemented. The mouse adapter
 > (`adapters/atk`) reads battery, charging state, wireless link, firmware
 > version, report rate and the active DPI slot; report rate and the DPI slot are
@@ -39,7 +39,7 @@ descriptors rather than hard-coded per vendor.
 | M1 | DDC/CI adapter (brightness, contrast, input, HDR) | **done** (HDR where advertised) |
 | M2 | Scene engine (foreground trigger, read-before-write) | **done** (side-effect control untested on hardware) |
 | M3 | HID adapters (ATK mouse, VIA keyboard) | **partial** (mouse read/write; keyboard read + keymap editing; headset not) |
-| M4 | Full panel UI | partial (descriptor-driven controls, settings page, en + zh-CN + zh-TW) |
+| M4 | Full panel UI | **done** (device detail pages, undo, Ctrl+Alt+M, diagnostics, confirmations, retry, keyboard navigation) |
 | M5 | Session recording / replay | not implemented |
 | M6 | Packaging, auto-start, signing | **partial** (unsigned per-user NSIS installer, auto-start) |
 | M7 | Public release | not implemented |

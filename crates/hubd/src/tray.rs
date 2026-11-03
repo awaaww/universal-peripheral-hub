@@ -12,6 +12,9 @@ use std::time::Duration;
 use tokio::sync::watch;
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    RegisterHotKey, UnregisterHotKey, MOD_ALT, MOD_CONTROL, MOD_SHIFT, VK_M,
+};
 use windows_sys::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_INFO, NIM_ADD, NIM_DELETE,
     NIM_MODIFY, NOTIFYICONDATAW,
@@ -21,8 +24,8 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     DestroyMenu, DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadCursorW,
     LoadIconW, PostMessageW, PostQuitMessage, RegisterClassExW, SetForegroundWindow,
     TrackPopupMenu, TranslateMessage, MF_CHECKED, MF_SEPARATOR, MF_STRING, MSG, TPM_NONOTIFY,
-    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_LBUTTONUP,
-    WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
+    TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_DESTROY, WM_HOTKEY,
+    WM_LBUTTONUP, WM_NULL, WM_RBUTTONUP, WNDCLASSEXW,
 };
 
 use crate::service::Service;
@@ -33,6 +36,9 @@ const ID_OPEN: u32 = 1001;
 const ID_TOGGLE: u32 = 1002;
 const ID_AUTOSTART: u32 = 1003;
 const ID_QUIT: u32 = 1004;
+/// Registered on the tray window so the shortcut works even when the panel is
+/// hidden. Ctrl+Alt+M is free on a default Windows install.
+const ID_HOTKEY: i32 = 1005;
 
 struct TrayContext {
     service: Arc<Service>,
@@ -126,6 +132,29 @@ unsafe fn create_window() -> io::Result<HWND> {
     if !add_icon(hwnd, icon) {
         return Err(io::Error::other("Shell_NotifyIconW(NIM_ADD) failed"));
     }
+    // A shortcut other software already owns is a nuisance, not a reason to
+    // refuse to start: the tray menu still opens the panel. Ctrl+Alt+M is the
+    // documented combination; when something else has it (game overlays and
+    // the shell are common culprits) try the Shift variant so the shortcut
+    // still exists, and log which one is live.
+    let mut registered = None;
+    for (mods, name) in [
+        (MOD_CONTROL | MOD_ALT, "Ctrl+Alt+M"),
+        (MOD_CONTROL | MOD_ALT | MOD_SHIFT, "Ctrl+Alt+Shift+M"),
+    ] {
+        if RegisterHotKey(hwnd, ID_HOTKEY, mods, VK_M as u32) != 0 {
+            registered = Some(name);
+            break;
+        }
+    }
+    match registered {
+        Some(name) => tracing::info!(shortcut = name, "registered the panel shortcut"),
+        None => tracing::warn!(
+            error = io::Error::last_os_error().raw_os_error().unwrap_or(0),
+            "cannot register Ctrl+Alt+M or the Ctrl+Alt+Shift+M fallback; \
+             the panel can still be opened from the tray"
+        ),
+    }
     Ok(hwnd)
 }
 
@@ -166,7 +195,14 @@ unsafe extern "system" fn wndproc(
             }
             0
         }
+        WM_HOTKEY => {
+            if wparam as i32 == ID_HOTKEY {
+                activate();
+            }
+            0
+        }
         WM_DESTROY => {
+            UnregisterHotKey(hwnd, ID_HOTKEY);
             PostQuitMessage(0);
             0
         }

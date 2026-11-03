@@ -63,6 +63,15 @@ pub mod method {
     /// Stop (or resume) talking to one device. The persisted token is
     /// adapter-specific and opaque to the client.
     pub const DEVICE_SET_BLOCKED: &str = "device.set_blocked";
+    /// Recent writes for one device, newest first. The panel uses it to show
+    /// what Undo would revert before the user commits to it.
+    pub const DEVICE_HISTORY: &str = "device.history";
+    /// Revert the most recent write to a device. The previous value is written
+    /// back through the adapter and read back like any other write.
+    pub const DEVICE_UNDO: &str = "device.undo";
+    /// Everything the diagnostics section needs: versions, adapter health and
+    /// the most recent RPC failures.
+    pub const DIAGNOSTICS_GET: &str = "diagnostics.get";
     /// Read the scene document together with what the engine is doing.
     pub const SCENES_GET: &str = "scenes.get";
     /// Replace the whole document. `mode` decides whether the change is
@@ -306,6 +315,66 @@ impl SetBlockedParams {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ReadResult {
     pub value: CapabilityValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryParams {
+    pub device: String,
+}
+
+/// One reversible write. `value` is the value that was replaced, so the panel
+/// can label the button "Undo: Brightness 40%" without another device read.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub capability: String,
+    pub cap_type: String,
+    pub label: String,
+    pub value: CapabilityValue,
+    /// Milliseconds since the Unix epoch.
+    pub at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HistoryResult {
+    pub device: String,
+    pub entries: Vec<HistoryEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UndoParams {
+    pub device: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UndoResult {
+    pub device: String,
+    pub capability: String,
+    pub cap_type: String,
+    pub label: String,
+    /// The value written by the undo (the one that was replaced by the undone
+    /// write), echoed back from the read-back when it matched.
+    pub value: CapabilityValue,
+    pub matched: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticsError {
+    pub at_ms: u64,
+    pub method: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DiagnosticsResult {
+    pub hub_version: String,
+    pub protocol: u32,
+    pub pid: u32,
+    pub config_dir: String,
+    pub pipe: String,
+    pub adapters: Vec<AdapterState>,
+    pub recent_errors: Vec<DiagnosticsError>,
 }
 
 pub type CapabilityWriteResult = WriteOutcome;

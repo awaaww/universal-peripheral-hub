@@ -403,3 +403,55 @@ device drops to or below the threshold and re-arms only after the reading rises
 more than five points above it. Without the re-arm a machine hovering at the
 threshold would beep on every check; without the "once" it would beep every
 thirty seconds.
+
+## D34 — Undo is a per-device stack of replaced values, owned by `hubd`
+
+`capability.write` snapshots the value it is about to replace *before* touching
+the device and pushes it onto that device's undo stack (newest last, at most 20
+entries). `device.history` returns the stack newest-first so the panel can label
+the button ("Undo brightness 40 %") without another device read;
+`device.undo` pops one entry, writes the stored value back through the adapter
+and reads it back like any other write. If that write fails the entry is pushed
+back, so a transient error does not silently discard the user's only undo.
+
+Two boundaries are deliberate. First, only writes that arrive through
+`Service::write` are recorded: scene applications go through `HubIo` and must
+not turn the Undo button into a second scene engine. Second, the stack is
+per-device and in-memory: it survives panel close/reopen because `hubd` owns it,
+but not a core restart — persisting it would mean replaying device writes across
+a reboot, which is exactly what the scene engine's baseline rule forbids.
+
+Rejected alternatives: undo in the panel (the panel may be closed between the
+write and the undo, and it would have to re-read every capability to know the
+previous value); one global stack (undoing a monitor write because a mouse was
+changed later is confusing); persisting the stack to `settings.json` (stale
+values across reboots, and it invites a "restore everything on start" behaviour
+we do not want).
+
+## D35 — Ctrl+Alt+M is registered on the tray window, and failure is not fatal
+
+The shortcut is a `RegisterHotKey` on the tray window's message loop, which is
+alive for the whole `hubd` lifetime, so the shortcut works with the panel
+hidden. On `WM_HOTKEY` the core takes the same path as the second-instance
+activation: show/focus the panel, launching it if it is not running.
+
+Another program may already own the combination (this machine's
+`Ctrl+Alt+M` is taken by an unrelated application, which is how the fallback was
+found). That is a nuisance, not a startup failure: the core tries
+`Ctrl+Alt+Shift+M` next, logs which combination is live, and keeps running with
+the tray menu as the alternative if both are taken. The hotkey is unregistered
+in `WM_DESTROY` so a restarted tray thread cannot inherit a stale registration.
+
+## D36 — Diagnostics are a snapshot plus a bounded error ring
+
+`diagnostics.get` is answered from memory only: version, protocol, pid, pipe
+name, config directory, the adapter states the hub already tracks, and the last
+20 failed RPCs newest-first. The ring is filled by the server at the boundary
+where a response with an error is about to be written, so what the panel sees in
+the list is exactly what a client received — not a second, divergent log.
+
+The list is bounded per process and never persisted: diagnostics describe this
+run. That keeps the pipe response small and avoids writing failure details to
+disk, which users share in bug reports far more often than they intend. The
+adapter rows deliberately reuse `AdapterState`, so an adapter that is disabled
+or latched off shows up the same way it does in the panel's adapter strip.

@@ -68,7 +68,20 @@ async fn handle_client(pipe: NamedPipeServer, service: Arc<Service>) -> std::io:
                     continue;
                 }
                 let response = match serde_json::from_str::<Request>(&line) {
-                    Ok(request) => dispatch(Arc::clone(&service), request).await,
+                    Ok(request) => {
+                        let method = request.method.clone();
+                        let response = dispatch(Arc::clone(&service), request).await;
+                        // Keep a bounded record of what the client saw fail;
+                        // the diagnostics section reads exactly this.
+                        if let Some(error) = response.as_ref().and_then(|r| r.error.as_ref()) {
+                            service.record_error(
+                                &method,
+                                error.data.as_ref().map(|data| data.kind.clone()),
+                                &error.message,
+                            );
+                        }
+                        response
+                    }
                     Err(err) => Some(Response::parse_error(err.to_string())),
                 };
                 if let Some(response) = response {

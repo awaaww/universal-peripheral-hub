@@ -898,3 +898,278 @@ body.modal-open {
   font-size: 10.5px;
   font-weight: 600;
 }
+
+/* Device detail page ----------------------------------------------------- */
+.card-openable {
+  cursor: default;
+}
+
+.card-openable:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.card-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.card-identity p {
+  margin: 0;
+}
+
+.card-identity:hover h3 {
+  color: var(--accent);
+}
+
+.card-identity:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.device-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.detail-back {
+  flex: none;
+}
+
+.detail-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.detail-title h2 {
+  margin: 0;
+  font-size: 21px;
+  line-height: 1.25;
+}
+
+.detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  flex-wrap: wrap;
+}
+
+.detail-meta p {
+  margin: 0;
+}
+
+.detail-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.detail-undo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  padding: 1px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.note-ok {
+  color: var(--accent);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.detail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.detail-group-title {
+  margin: 0;
+  padding: 0 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.retry-button {
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+/* Diagnostics panel in settings ----------------------------------------- */
+.modal-select {
+  min-width: 180px;
+}
+
+.modal-divider {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+
+.diagnostics {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.diag-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.diag-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.diag-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.diag-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  font-size: 12.5px;
+}
+
+.diag-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 14px;
+  margin: 0;
+}
+
+.diag-fact {
+  display: contents;
+}
+
+.diag-fact dt {
+  color: var(--muted);
+}
+
+.diag-fact dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.diag-adapters,
+.diag-errors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.diag-subtitle {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.diag-adapter {
+  display: flex;
+  align-items: center;
+  gap: 4px 10px;
+  flex-wrap: wrap;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-row);
+}
+
+.diag-adapter-name {
+  font-weight: 600;
+}
+
+.diag-error-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.diag-error {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-row);
+}
+
+.diag-error-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.diag-message {
+  margin: 3px 0 0;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+/* Dangerous-write confirmation ------------------------------------------ */
+.modal-danger {
+  width: min(430px, 100%);
+}
+
+.danger-list {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 13px;
+}
+
+.danger-list li::marker {
+  color: var(--warn);
+}
+
+.modal-danger .modal-actions {
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}

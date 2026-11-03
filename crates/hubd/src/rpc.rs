@@ -80,6 +80,19 @@ pub async fn dispatch(service: Arc<Service>, request: Request) -> Option<Respons
             },
             Err(err) => Response::failure(id, err),
         },
+        method::DEVICE_HISTORY => match parse::<hub_proto::HistoryParams>(params) {
+            Ok(params) => success(id, &service.history(&params.device)),
+            Err(err) => Response::failure(id, err),
+        },
+        method::DEVICE_UNDO => match parse::<hub_proto::UndoParams>(params) {
+            Ok(params) => match blocking(service, move |svc| svc.undo(&params.device)).await {
+                Ok(result) => success(id, &result),
+                Err(err) => Response::failure(id, err),
+            },
+            Err(err) => Response::failure(id, err),
+        },
+        // Pure in-memory snapshot: versions, adapter health, recent failures.
+        method::DIAGNOSTICS_GET => success(id, &service.diagnostics()),
         // Preferences are one small struct in memory; only writing them touches
         // the disk.
         method::PREFS_GET => success(

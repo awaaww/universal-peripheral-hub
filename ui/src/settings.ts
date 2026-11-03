@@ -7,13 +7,15 @@
 
 import { clear, el } from "./dom";
 import { isLanguage, getLanguage, LANGUAGE_OPTIONS, t } from "./i18n";
-import type { Prefs } from "./protocol";
+import type { Diagnostics, Prefs } from "./protocol";
 
 export interface SettingsDeps {
   /** `prefs.get`; called on every open so the form shows the stored values. */
   load(): Promise<Prefs>;
   /** `prefs.set` plus applying the normalized result (language included). */
   save(prefs: Prefs): Promise<void>;
+  /** `diagnostics.get`; shown below the preferences, refreshed on demand. */
+  diagnostics(): Promise<Diagnostics>;
 }
 
 const INTERVALS = [15, 30, 60, 120, 300];
@@ -76,9 +78,214 @@ export function openSettings(deps: SettingsDeps): void {
     if (closed) return;
     closed = true;
     document.removeEventListener("keydown", onKeyDown, true);
-    document.body.classList.remove("modal-open");
     backdrop.remove();
-    if (opener?.isConnected) opener.focus();
+    if (!document.querySelector(".modal-backdrop")) {
+      document.body.classList.remove("modal-open");
+    }
+    // The opener can be a header button that a preferences repaint replaced;
+    // fall back to the current settings button so focus is never lost.
+    const returnTo = opener?.isConnected
+      ? opener
+      : document.querySelector<HTMLElement>(".button-icon");
+    returnTo?.focus();
+  }
+
+  // --- Diagnostics ---------------------------------------------------------
+  // A read-only block below the preferences. It loads independently, so an
+  // older hub without `diagnostics.get` still leaves the prefs form usable.
+
+  let diagnostics: Diagnostics | null = null;
+  let diagnosticsError: string | null = null;
+  let diagnosticsNode: HTMLElement | null = null;
+  let diagnosticsBody: HTMLElement | null = null;
+  let diagnosticsRefresh: HTMLButtonElement | null = null;
+  let diagnosticsCopy: HTMLButtonElement | null = null;
+  let diagnosticsBusy = false;
+
+  function clock(at: number): string {
+    const date = new Date(at);
+    const pad = (value: number) => String(value).padStart(2, "0");
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
+
+  function adapterKind(adapter: Diagnostics["adapters"][number]): string {
+    return adapter.kind === "in_process"
+      ? t("settings.adapterKind.in_process")
+      : t("settings.adapterKind.out_of_process");
+  }
+
+  function adapterStatus(adapter: Diagnostics["adapters"][number]): string {
+    const state = adapter.enabled ? t("settings.adapterOn") : t("settings.adapterOff");
+    const loaded = adapter.loaded ? t("settings.adapterLoaded") : t("settings.adapterNotLoaded");
+    const devices =
+      adapter.device_count === 1
+        ? t("settings.adapterDevicesOne")
+        : t("settings.adapterDevices", { count: adapter.device_count });
+    return `${state} · ${loaded} · ${devices}`;
+  }
+
+  function diagnosticsText(data: Diagnostics): string {
+    const lines: string[] = [
+      `${t("app.title")} — ${t("settings.diagnostics")}`,
+      `${t("settings.hubVersion")}: ${data.hub_version}`,
+      `${t("settings.protocol")}: ${data.protocol}`,
+      `${t("settings.pid")}: ${data.pid}`,
+      `${t("settings.pipe")}: ${data.pipe}`,
+      `${t("settings.configDir")}: ${data.config_dir}`,
+      "",
+      `${t("adapters.title")}:`,
+    ];
+    if (data.adapters.length === 0) lines.push("  —");
+    for (const adapter of data.adapters) {
+      lines.push(`  ${adapter.name} (${adapter.id}) [${adapterKind(adapter)}] ${adapterStatus(adapter)}`);
+    }
+    lines.push("", `${t("settings.recentErrors")}:`);
+    if (data.recent_errors.length === 0) {
+      lines.push(`  ${t("settings.noErrors")}`);
+    } else {
+      for (const entry of data.recent_errors) {
+        const kind = entry.kind ? ` [${entry.kind}]` : "";
+        lines.push(`  ${clock(entry.at_ms)} ${entry.method}${kind}: ${entry.message}`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  async function loadDiagnostics(): Promise<void> {
+    if (!diagnosticsBody || diagnosticsBusy) return;
+    diagnosticsBusy = true;
+    if (diagnosticsRefresh) diagnosticsRefresh.disabled = true;
+    clear(diagnosticsBody);
+    diagnosticsBody.append(
+      el("p", { class: "muted", text: t("settings.diagnosticsLoading") }),
+    );
+    try {
+      diagnostics = await deps.diagnostics();
+      diagnosticsError = null;
+    } catch (err) {
+      diagnostics = null;
+      diagnosticsError = messageOf(err);
+    } finally {
+      diagnosticsBusy = false;
+      if (diagnosticsRefresh) diagnosticsRefresh.disabled = false;
+      renderDiagnostics();
+    }
+  }
+
+  function renderDiagnostics(): void {
+    if (!diagnosticsBody) return;
+    clear(diagnosticsBody);
+    if (diagnosticsCopy) diagnosticsCopy.disabled = diagnostics === null;
+    if (!diagnostics) {
+      diagnosticsBody.append(
+        el("p", {
+          class: "modal-error",
+          text: t("settings.diagnosticsFailed", {
+            error: diagnosticsError ?? t("error.unknown"),
+          }),
+        }),
+      );
+      return;
+    }
+    const data = diagnostics;
+
+    const facts = el("dl", { class: "diag-facts" });
+    const rows: [string, string][] = [
+      [t("settings.hubVersion"), data.hub_version],
+      [t("settings.protocol"), data.protocol],
+      [t("settings.pid"), String(data.pid)],
+      [t("settings.pipe"), data.pipe],
+      [t("settings.configDir"), data.config_dir],
+    ];
+    for (const [label, value] of rows) {
+      facts.append(
+        el("div", { class: "diag-fact" }, [
+          el("dt", { text: label }),
+          el("dd", { class: "mono", text: value }),
+        ]),
+      );
+    }
+
+    const adapterBox = el("div", { class: "diag-adapters" }, [
+      el("h4", { class: "diag-subtitle", text: t("adapters.title") }),
+    ]);
+    if (data.adapters.length === 0) {
+      adapterBox.append(el("p", { class: "muted", text: "—" }));
+    }
+    for (const adapter of data.adapters) {
+      adapterBox.append(
+        el("div", { class: "diag-adapter" }, [
+          el("span", { class: "diag-adapter-name", text: adapter.name }),
+          el("span", { class: "tag", text: adapterKind(adapter) }),
+          el("span", { class: "mono muted", text: adapter.id }),
+          el("span", { class: "muted", text: adapterStatus(adapter) }),
+        ]),
+      );
+    }
+
+    const errorBox = el("div", { class: "diag-errors" }, [
+      el("h4", { class: "diag-subtitle", text: t("settings.recentErrors") }),
+    ]);
+    if (data.recent_errors.length === 0) {
+      errorBox.append(el("p", { class: "muted", text: t("settings.noErrors") }));
+    } else {
+      const list = el("ul", { class: "diag-error-list" });
+      for (const entry of data.recent_errors) {
+        const head = el("div", { class: "diag-error-head" }, [
+          el("span", { class: "mono", text: clock(entry.at_ms) }),
+          el("span", { class: "mono muted", text: entry.method }),
+          entry.kind ? el("span", { class: "tag tag-warn", text: entry.kind }) : el("span", {}),
+        ]);
+        list.append(
+          el("li", { class: "diag-error" }, [head, el("p", { class: "diag-message", text: entry.message })]),
+        );
+      }
+      errorBox.append(list);
+    }
+
+    diagnosticsBody.append(facts, adapterBox, errorBox);
+  }
+
+  async function copyDiagnostics(): Promise<void> {
+    if (!diagnostics || !diagnosticsCopy) return;
+    const button = diagnosticsCopy;
+    try {
+      await navigator.clipboard.writeText(diagnosticsText(diagnostics));
+      button.textContent = t("settings.copied");
+    } catch {
+      button.textContent = t("settings.copyFailed");
+    }
+    window.setTimeout(() => {
+      if (button.isConnected) button.textContent = t("settings.copy");
+    }, 1600);
+  }
+
+  function diagnosticsSection(): HTMLElement {
+    if (diagnosticsNode) return diagnosticsNode;
+    diagnosticsBody = el("div", { class: "diag-body" });
+    diagnosticsRefresh = el("button", {
+      class: "button button-small",
+      type: "button",
+      text: t("settings.refresh"),
+      onclick: () => void loadDiagnostics(),
+    });
+    diagnosticsCopy = el("button", {
+      class: "button button-small",
+      type: "button",
+      text: t("settings.copy"),
+      disabled: true,
+      onclick: () => void copyDiagnostics(),
+    });
+    diagnosticsNode = el("section", { class: "diagnostics" }, [
+      el("hr", { class: "modal-divider" }),
+      el("div", { class: "diag-head" }, [
+        el("h3", { class: "diag-title", text: t("settings.diagnostics") }),
+        el("div", { class: "diag-actions" }, [diagnosticsRefresh, diagnosticsCopy]),
+      ]),
+      diagnosticsBody,
+    ]);
+    void loadDiagnostics();
+    return diagnosticsNode;
   }
 
   function focusable(): HTMLElement[] {
@@ -141,6 +348,7 @@ export function openSettings(deps: SettingsDeps): void {
       title(),
       el("p", { class: "modal-error", text: t("settings.loadFailed", { error: message }) }),
       actions(null, cancel),
+      diagnosticsSection(),
     );
     cancel.focus();
   }
@@ -302,6 +510,7 @@ export function openSettings(deps: SettingsDeps): void {
       ]),
       errorNode,
       actions(saveButton, cancelButton),
+      diagnosticsSection(),
     );
     language.focus();
   }

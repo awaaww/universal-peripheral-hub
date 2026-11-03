@@ -1,4 +1,5 @@
 import { clear, el } from "./dom";
+import { failureText } from "./failures";
 import { t } from "./i18n";
 import { keymapEditor } from "./keymap";
 import type {
@@ -6,6 +7,7 @@ import type {
   CapabilityDescriptor,
   CapabilityValue,
   DeviceDescriptor,
+  HistoryEntry,
   HubFailure,
   Scene,
   SceneItem,
@@ -15,11 +17,18 @@ import type {
   Snapshot,
 } from "./protocol";
 
+export interface StatusEntry {
+  text: string;
+  tone: "ok" | "error" | "saving";
+  /// Present after a failed write: resend this value when Retry is clicked.
+  retry?: { device: string; capability: string; value: CapabilityValue };
+}
+
 export interface UiState {
   snapshot: Snapshot | null;
   values: Map<string, CapabilityValue>;
   readErrors: Map<string, HubFailure>;
-  status: Map<string, { text: string; tone: "ok" | "error" | "saving" }>;
+  status: Map<string, StatusEntry>;
   online: boolean;
   version: string | null;
   error: string | null;
@@ -36,6 +45,16 @@ export interface UiState {
   scenesUnsupported: boolean;
   /// One scenes RPC at a time, so two full-document writes cannot race.
   scenesBusy: boolean;
+  /// Device whose detail page replaces the card grid; null on the grid.
+  detailDeviceId: string | null;
+  /// Newest-first undo history for the open detail device.
+  history: HistoryEntry[];
+  /// A `device.history` read is in flight.
+  historyLoading: boolean;
+  /// A `device.undo` call is in flight.
+  undoBusy: boolean;
+  /// Transient "Reverted" note shown next to the undo button.
+  undoNote: string | null;
 }
 
 export interface Actions {
@@ -49,6 +68,14 @@ export interface Actions {
   setSceneOption(option: "allow_side_effects" | "startup_apply", checked: boolean): void;
   /** Open the settings overlay (language, close behaviour, scan, battery alert). */
   openSettings(): void;
+  /** Replace the card grid with one device's detail page. */
+  openDevice(deviceId: string): void;
+  /** Return from the detail page to the card grid. */
+  closeDevice(): void;
+  /** Revert the newest change on the open device. */
+  undo(deviceId: string): void;
+  /** Resend the value of a failed write. */
+  retry(deviceId: string, capabilityId: string, value: CapabilityValue): void;
   /** Re-render from the current state without touching the hub. */
   redraw(): void;
 }
@@ -66,9 +93,17 @@ export function render(root: HTMLElement, state: UiState, actions: Actions): voi
     const error = state.error ?? state.scenesError;
     if (error) root.append(actionError(error));
   }
-  if (state.snapshot) root.append(adapters(state.snapshot.adapters, state, actions));
-  if (state.scenes && !state.scenesUnsupported) root.append(scenes(state.scenes, state, actions));
-  root.append(devices(state, actions));
+  const detailDevice =
+    state.detailDeviceId && state.snapshot
+      ? (state.snapshot.devices.find((device) => device.id === state.detailDeviceId) ?? null)
+      : null;
+  if (detailDevice) {
+    root.append(detail(detailDevice, state, actions));
+  } else {
+    if (state.snapshot) root.append(adapters(state.snapshot.adapters, state, actions));
+    if (state.scenes && !state.scenesUnsupported) root.append(scenes(state.scenes, state, actions));
+    root.append(devices(state, actions));
+  }
   root.append(footer());
 }
 
@@ -406,25 +441,58 @@ function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions):
   if (battery) {
     titleRow.append(batteryRing(battery, state.values.get(key(device.id, battery.id))));
   }
-  const card = el("article", { class: "card" }, [
-    el("div", { class: "card-head" }, [
-      el("div", {}, [
-        titleRow,
-        subtitle ? el("p", { class: "muted", text: subtitle }) : el("span", {}),
-        device.serial ? el("p", { class: "mono muted", text: device.serial }) : el("span", {}),
+
+  // The identity block is the "open details" hit area; the Ignore button and
+  // the controls stay outside it so clicking them never navigates.
+  const identity = el(
+    "div",
+    {
+      class: "card-identity",
+      title: t("detail.openLabel", { name: device.name }),
+      onclick: () => actions.openDevice(device.id),
+    },
+    [
+      titleRow,
+      subtitle ? el("p", { class: "muted", text: subtitle }) : el("span", {}),
+      device.serial ? el("p", { class: "mono muted", text: device.serial }) : el("span", {}),
+    ],
+  );
+
+  const card = el(
+    "article",
+    {
+      class: "card card-openable",
+      tabindex: "0",
+      role: "group",
+      "aria-label": t("detail.openLabel", { name: device.name }),
+      "data-device-id": device.id,
+    },
+    [
+      el("div", { class: "card-head" }, [
+        identity,
+        el("div", { class: "card-head-side" }, [
+          el("span", { class: "tag", text: device.adapter }),
+          el("button", {
+            class: "link-button",
+            type: "button",
+            text: t("devices.ignore"),
+            title: t("devices.ignoreTitle"),
+            onclick: () => actions.ignoreDevice(device),
+          }),
+        ]),
       ]),
-      el("div", { class: "card-head-side" }, [
-        el("span", { class: "tag", text: device.adapter }),
-        el("button", {
-          class: "link-button",
-          type: "button",
-          text: t("devices.ignore"),
-          title: t("devices.ignoreTitle"),
-          onclick: () => actions.ignoreDevice(device),
-        }),
-      ]),
-    ]),
-  ]);
+    ],
+  );
+
+  // Enter/Space on the focused card opens it. Key events from the controls
+  // inside the card bubble here, so only events targeting the card itself count.
+  card.addEventListener("keydown", (event) => {
+    if (event.target !== card) return;
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      actions.openDevice(device.id);
+    }
+  });
 
   const rows = el("div", { class: "rows" });
   for (const capability of device.capabilities) {
@@ -433,6 +501,130 @@ function deviceCard(device: DeviceDescriptor, state: UiState, actions: Actions):
   }
   card.append(rows);
   return card;
+}
+
+/** The detail page: identity, undo, then every capability grouped by prefix. */
+function detail(device: DeviceDescriptor, state: UiState, actions: Actions): HTMLElement {
+  const back = el("button", {
+    class: "button detail-back",
+    type: "button",
+    text: t("detail.back"),
+    onclick: () => actions.closeDevice(),
+  });
+
+  const subtitle = [device.vendor, device.model].filter(Boolean).join(" · ");
+  const meta = el("div", { class: "detail-meta" }, [
+    subtitle ? el("p", { class: "muted", text: subtitle }) : el("span", {}),
+    device.serial ? el("p", { class: "mono muted", text: device.serial }) : el("span", {}),
+    el("span", {
+      class: "tag",
+      text: device.adapter,
+      title: t("detail.adapterTag", { adapter: device.adapter }),
+    }),
+  ]);
+
+  const newest = state.history[0];
+  const undoText = newest
+    ? t("detail.undo", { label: newest.label, value: historyValue(device, newest) })
+    : t("detail.undoEmpty");
+  const undoButton = el("button", {
+    class: "button button-small",
+    type: "button",
+    text: state.historyLoading && !newest ? t("card.reading") : undoText,
+    title: newest ? t("detail.undo", { label: newest.label, value: historyValue(device, newest) }) : t("detail.undoEmpty"),
+    disabled: state.undoBusy || state.historyLoading || !newest,
+    onclick: () => actions.undo(device.id),
+  });
+
+  const undoRow = el("div", { class: "detail-undo" }, [undoButton]);
+  if (state.history.length > 1) {
+    undoRow.append(
+      el("span", {
+        class: "chip",
+        text: String(state.history.length),
+        title: t("detail.undoCount", { count: state.history.length }),
+      }),
+    );
+  }
+  if (state.undoNote) undoRow.append(el("span", { class: "note-ok", text: state.undoNote }));
+
+  const section = el("section", { class: "device-detail" }, [
+    el("div", { class: "detail-head" }, [
+      back,
+      el("div", { class: "detail-title" }, [el("h2", { text: device.name }), meta]),
+      el("div", { class: "detail-actions" }, [undoRow]),
+    ]),
+  ]);
+
+  for (const [prefix, capabilities] of groupCapabilities(device.capabilities)) {
+    const rows = el("div", { class: "rows" });
+    for (const capability of capabilities) rows.append(capabilityRow(device, capability, state, actions));
+    section.append(
+      el("div", { class: "detail-group" }, [
+        el("h3", { class: "detail-group-title", text: groupTitle(prefix) }),
+        rows,
+      ]),
+    );
+  }
+  return section;
+}
+
+/** Capabilities bucketed by the part of `cap_type` before the first dot. */
+function groupCapabilities(
+  capabilities: CapabilityDescriptor[],
+): [string, CapabilityDescriptor[]][] {
+  const groups = new Map<string, CapabilityDescriptor[]>();
+  for (const capability of capabilities) {
+    const prefix = capability.cap_type.split(".")[0] || capability.cap_type;
+    const list = groups.get(prefix);
+    if (list) list.push(capability);
+    else groups.set(prefix, [capability]);
+  }
+  return [...groups.entries()];
+}
+
+/** Localized heading for a known prefix; adapter-specific prefixes stay as-is. */
+function groupTitle(prefix: string): string {
+  const translationKey = `group.${prefix}`;
+  const text = t(translationKey);
+  return text === translationKey ? prefix : text;
+}
+
+/** A history entry's value, using its capability descriptor when still present. */
+function historyValue(device: DeviceDescriptor, entry: HistoryEntry): string {
+  const capability =
+    device.capabilities.find((item) => item.id === entry.capability) ??
+    device.capabilities.find((item) => item.cap_type === entry.cap_type);
+  if (!capability) return formatValue(entry.value);
+  const value = entry.value;
+  if (value.type === "int" && capability.kind.type === "int") {
+    return `${value.value}${capability.kind.unit ?? ""}`;
+  }
+  if (value.type === "enum" && capability.kind.type === "enum") {
+    const option = capability.kind.options.find((item) => item.value === value.value);
+    return option?.label ?? value.value;
+  }
+  return formatValue(value);
+}
+
+/** The value alone, without a capability's unit (history labels). */
+function formatValue(value: CapabilityValue): string {
+  switch (value.type) {
+    case "int":
+      return String(value.value);
+    case "bool":
+      return value.value ? t("control.on") : t("control.off");
+    case "enum":
+      return value.value;
+    case "rgb":
+      return `#${[value.value.r, value.value.g, value.value.b]
+        .map((n) => n.toString(16).padStart(2, "0"))
+        .join("")}`;
+    case "bytes":
+      return t("card.bytes", { count: value.value.length });
+    case "text":
+      return value.value.length > 0 ? value.value : "—";
+  }
 }
 
 /** A battery-like capability: read-only integer percentage, or `*.battery`. */
@@ -561,10 +753,19 @@ function capabilityRow(
   const feedback = el("div", { class: "feedback" });
   if (status) {
     feedback.append(el("span", { class: `status status-${status.tone}`, text: status.text }));
+    if (status.retry) {
+      const retry = status.retry;
+      feedback.append(
+        el("button", {
+          class: "button button-small retry-button",
+          type: "button",
+          text: t("status.retry"),
+          onclick: () => actions.retry(retry.device, retry.capability, retry.value),
+        }),
+      );
+    }
   } else if (readError) {
-    feedback.append(
-      el("span", { class: "status status-error", text: `${readError.kind ?? "error"}: ${readError.message}` }),
-    );
+    feedback.append(el("span", { class: "status status-error", text: failureText(readError) }));
   } else if (capability.access === "write_only") {
     feedback.append(el("span", { class: "muted", text: t("card.writeOnly") }));
   } else {

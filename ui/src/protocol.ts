@@ -159,3 +159,47 @@ export const DEFAULT_PREFS: Prefs = {
   battery_alert: false,
   battery_alert_percent: 20,
 };
+
+/// One undoable change, from `device.history` (newest first, at most 20).
+export interface HistoryEntry {
+  capability: string;
+  cap_type: string;
+  label: string;
+  value: CapabilityValue;
+  at_ms: number;
+}
+
+/// `device.history` response.
+export interface HistoryResult {
+  device: string;
+  entries: HistoryEntry[];
+}
+
+/// `device.undo` response: the value the device holds after the revert.
+export interface UndoResult {
+  device: string;
+  capability: string;
+  cap_type: string;
+  label: string;
+  value: CapabilityValue;
+  matched: boolean;
+}
+
+/// One entry of `diagnostics.get`'s recent-error ring.
+export interface DiagnosticsError {
+  at_ms: number;
+  method: string;
+  kind?: string | null;
+  message: string;
+}
+
+/// `diagnostics.get` response.
+export interface Diagnostics {
+  hub_version: string;
+  protocol: string;
+  pid: number;
+  config_dir: string;
+  pipe: string;
+  adapters: AdapterState[];
+  recent_errors: DiagnosticsError[];
+}

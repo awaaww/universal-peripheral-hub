@@ -5,7 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { setLanguage, t } from "./i18n";
-import { render, type Actions, type UiState } from "./render";
+import { alreadyConfirmed, confirmDangerous } from "./confirm";
+import { failureText } from "./failures";
+import { render, type Actions, type StatusEntry, type UiState } from "./render";
 import { openSettings } from "./settings";
 import { DEFAULT_PREFS } from "./protocol";
 import type {
@@ -13,10 +15,13 @@ import type {
   CapabilityDescriptor,
   CapabilityValue,
   DeviceDescriptor,
+  Diagnostics,
+  HistoryResult,
   HubFailure,
   Prefs,
   ScenesResult,
   Snapshot,
+  UndoResult,
   WriteOutcome,
 } from "./protocol";
 
@@ -36,6 +41,11 @@ const state: UiState = {
   scenesError: null,
   scenesUnsupported: false,
   scenesBusy: false,
+  detailDeviceId: null,
+  history: [],
+  historyLoading: false,
+  undoBusy: false,
+  undoNote: null,
 };
 
 function call<T>(method: string, params: unknown): Promise<T> {
@@ -78,6 +88,7 @@ function openSettingsModal(): void {
       applyPrefs(result.prefs);
       paint();
     },
+    diagnostics: () => call<Diagnostics>("diagnostics.get", {}),
   });
 }
 
@@ -104,6 +115,14 @@ function applySnapshot(snapshot: Snapshot): void {
   state.online = true;
   state.error = null;
   state.version = null;
+  // The open detail page cannot outlive its device.
+  if (state.detailDeviceId && !snapshot.devices.some((device) => device.id === state.detailDeviceId)) {
+    state.detailDeviceId = null;
+    state.history = [];
+    state.historyLoading = false;
+    state.undoBusy = false;
+    state.undoNote = null;
+  }
   paint();
 }
 
@@ -284,8 +303,13 @@ function valueOf(capability: CapabilityDescriptor, value: CapabilityValue | unde
   }
 }
 
-function setStatus(id: string, text: string, tone: "ok" | "error" | "saving") {
-  state.status.set(id, { text, tone });
+function setStatus(
+  id: string,
+  text: string,
+  tone: StatusEntry["tone"],
+  retry?: StatusEntry["retry"],
+): void {
+  state.status.set(id, retry ? { text, tone, retry } : { text, tone });
   paint();
 }
 
@@ -337,6 +361,32 @@ function write(device: DeviceDescriptor, capability: CapabilityDescriptor, value
   void drain(device.id);
 }
 
+/** True when the adapter says this change can disturb the device. */
+function hasSideEffects(capability: CapabilityDescriptor): boolean {
+  return capability.cost.side_effects.length > 0;
+}
+
+/** Confirm a disruptive change before it enters the write queue. */
+function requestWrite(
+  device: DeviceDescriptor,
+  capability: CapabilityDescriptor,
+  value: CapabilityValue,
+): void {
+  if (hasSideEffects(capability) && !alreadyConfirmed(capability.cap_type)) {
+    void confirmDangerous({ capability, onApply: () => write(device, capability, value) });
+    return;
+  }
+  write(device, capability, value);
+}
+
+/** Manual retry after the hub's single automatic retry is exhausted. */
+function retryWrite(deviceId: string, capabilityId: string, value: CapabilityValue): void {
+  const device = state.snapshot?.devices.find((item) => item.id === deviceId);
+  const capability = device?.capabilities.find((item) => item.id === capabilityId);
+  if (!device || !capability) return;
+  requestWrite(device, capability, value);
+}
+
 async function drain(deviceId: string): Promise<void> {
   if (draining.has(deviceId)) return;
   draining.add(deviceId);
@@ -382,6 +432,8 @@ async function send(item: PendingWrite): Promise<void> {
           setStatus(id, t("status.deviceKept", { value: valueOf(item.capability, outcome.value) }), "error");
         }
       }
+      // The open detail page lists this write as its newest history entry.
+      if (state.detailDeviceId === item.device.id) void loadHistory(item.device.id);
       return;
     } catch (err) {
       const failure = describe(err);
@@ -398,7 +450,11 @@ async function send(item: PendingWrite): Promise<void> {
       // the same capability; that queued value is what the user last asked for.
       if (!isQueued(item.device.id, item.capability.id)) {
         state.values.delete(id);
-        setStatus(id, `${failure.kind ?? "error"}: ${failure.message}`, "error");
+        setStatus(id, failureText(failure), "error", {
+          device: item.device.id,
+          capability: item.capability.id,
+          value: item.value,
+        });
       }
       return;
     }
@@ -454,8 +510,147 @@ function toggleBlockedList(adapterId: string): void {
   paint();
 }
 
+let undoNoteTimer: number | null = null;
+
+/** Show "Reverted" for a moment; the detail page keeps its focus otherwise. */
+function showUndoNote(): void {
+  state.undoNote = t("detail.reverted");
+  if (undoNoteTimer !== null) window.clearTimeout(undoNoteTimer);
+  undoNoteTimer = window.setTimeout(() => {
+    undoNoteTimer = null;
+    state.undoNote = null;
+    paint();
+  }, 2500);
+  paint();
+}
+
+/** Read the undo stack for the detail header and the undo button label. */
+async function loadHistory(deviceId: string): Promise<void> {
+  if (state.detailDeviceId !== deviceId) return;
+  state.historyLoading = true;
+  paint();
+  try {
+    const result = await call<HistoryResult>("device.history", { device: deviceId });
+    if (state.detailDeviceId === deviceId) state.history = result.entries;
+  } catch (err) {
+    // History is a convenience; a hub without it still has working controls.
+    console.error("cannot load device history", err);
+    if (state.detailDeviceId === deviceId) state.history = [];
+  } finally {
+    if (state.detailDeviceId === deviceId) {
+      state.historyLoading = false;
+      paint();
+    }
+  }
+}
+
+/** Re-read one device after an undo, leaving other devices untouched. */
+async function loadDeviceValues(device: DeviceDescriptor): Promise<void> {
+  for (const capability of device.capabilities) {
+    if (capability.access === "write_only") continue;
+    const id = key(device.id, capability.id);
+    try {
+      const result = await call<{ value: CapabilityValue }>("capability.read", {
+        device: device.id,
+        capability: capability.id,
+      });
+      state.values.set(id, result.value);
+      state.readErrors.delete(id);
+    } catch (err) {
+      state.readErrors.set(id, describe(err));
+    }
+    paint();
+  }
+}
+
+function focusDetailBack(): void {
+  root.querySelector<HTMLElement>(".detail-back")?.focus();
+}
+
+function focusCard(deviceId: string): void {
+  const cards = root.querySelectorAll<HTMLElement>("[data-device-id]");
+  for (const card of cards) {
+    if (card.dataset.deviceId === deviceId) {
+      card.focus();
+      return;
+    }
+  }
+}
+
+function openDevice(deviceId: string): void {
+  const device = state.snapshot?.devices.find((item) => item.id === deviceId);
+  if (!device) return;
+  state.detailDeviceId = deviceId;
+  state.history = [];
+  state.historyLoading = true;
+  state.undoBusy = false;
+  state.undoNote = null;
+  state.error = null;
+  paint();
+  // The click that opened the page also moves focus; run after it settles.
+  window.setTimeout(focusDetailBack, 0);
+  void loadHistory(deviceId);
+}
+
+function closeDevice(): void {
+  const deviceId = state.detailDeviceId;
+  if (!deviceId) return;
+  state.detailDeviceId = null;
+  state.history = [];
+  state.historyLoading = false;
+  state.undoBusy = false;
+  state.undoNote = null;
+  if (undoNoteTimer !== null) {
+    window.clearTimeout(undoNoteTimer);
+    undoNoteTimer = null;
+  }
+  paint();
+  window.setTimeout(() => focusCard(deviceId), 0);
+}
+
+async function undo(deviceId: string): Promise<void> {
+  if (state.undoBusy || state.detailDeviceId !== deviceId) return;
+  const device = state.snapshot?.devices.find((item) => item.id === deviceId);
+  if (!device) return;
+  state.undoBusy = true;
+  state.undoNote = null;
+  paint();
+  try {
+    const result = await call<UndoResult>("device.undo", { device: deviceId });
+    if (state.detailDeviceId !== deviceId) return;
+    // The undo re-reads the row below, so a "Synced · read back …" left over
+    // from the write being undone would now describe the wrong value.
+    state.status.delete(key(result.device, result.capability));
+    state.values.set(key(result.device, result.capability), result.value);
+    await loadDeviceValues(device);
+    if (state.detailDeviceId !== deviceId) return;
+    showUndoNote();
+    void loadHistory(deviceId);
+  } catch (err) {
+    if (state.detailDeviceId === deviceId) state.error = failureText(describe(err));
+  } finally {
+    state.undoBusy = false;
+    if (state.detailDeviceId === deviceId) paint();
+  }
+}
+
+// Escape leaves the detail page. Capture runs before the modal's own handler,
+// so an open confirm/settings dialog always wins and the check sees it.
+document.addEventListener(
+  "keydown",
+  (event) => {
+    if (event.key !== "Escape") return;
+    if (document.querySelector(".modal-backdrop")) return;
+    if (state.detailDeviceId) {
+      event.preventDefault();
+      closeDevice();
+    }
+  },
+  true,
+);
+
 const actions: Actions = {
-  write: (device, capability, value) => write(device, capability, value),
+  write: (device, capability, value) => requestWrite(device, capability, value),
   toggleAdapter: (adapter) => void toggleAdapter(adapter),
   rescan: () => void rescan(),
   ignoreDevice: (device) => void ignoreDevice(device),
@@ -464,6 +659,10 @@ const actions: Actions = {
   applyScene: (sceneId) => void applyScene(sceneId),
   setSceneOption: (option, checked) => void setSceneOption(option, checked),
   openSettings: () => openSettingsModal(),
+  openDevice: (deviceId) => openDevice(deviceId),
+  closeDevice: () => closeDevice(),
+  undo: (deviceId) => void undo(deviceId),
+  retry: (deviceId, capabilityId, value) => retryWrite(deviceId, capabilityId, value),
   redraw: () => paint(),
 };
 

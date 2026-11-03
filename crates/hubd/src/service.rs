@@ -1,7 +1,7 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use hub_core::device::DeviceDescriptor;
 use hub_core::scene::ScenesFile;
@@ -37,6 +37,43 @@ pub struct Service {
     /// Installed by `main` once the shutdown channel exists; `hub.shutdown`
     /// fires it so the panel can stop the core instead of leaving an orphan.
     shutdown: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    /// One undo stack per device, newest last. Only writes that came through
+    /// `Service::write` are recorded: scene applications are engine business,
+    /// not something the Undo button should silently revert.
+    history: Mutex<BTreeMap<String, VecDeque<UndoEntry>>>,
+    /// The last few failed RPCs, for the diagnostics section. Bounded so a
+    /// stuck client cannot grow it without limit.
+    recent_errors: Mutex<VecDeque<RecentError>>,
+    config_dir: PathBuf,
+}
+
+/// Enough history to cover "I fiddled with brightness for a bit" without
+/// keeping a log of everything the user ever did.
+const MAX_HISTORY: usize = 20;
+const MAX_RECENT_ERRORS: usize = 20;
+
+#[derive(Debug, Clone)]
+struct UndoEntry {
+    capability: String,
+    cap_type: String,
+    label: String,
+    previous: CapabilityValue,
+    at_ms: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RecentError {
+    at_ms: u64,
+    method: String,
+    kind: Option<String>,
+    message: String,
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Hub access for the scene engine. Each call takes the lock only for the
@@ -215,6 +252,10 @@ impl Service {
         options: ServiceOptions,
     ) -> Arc<Self> {
         let scenes_path = scenes_path_for(&settings_path);
+        let config_dir = settings_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
         let store = SettingsStore::load(settings_path);
         if let Some(quarantined) = store.quarantined() {
             tracing::warn!(
@@ -341,6 +382,9 @@ impl Service {
             started: Instant::now(),
             ui,
             shutdown: Mutex::new(None),
+            history: Mutex::new(BTreeMap::new()),
+            recent_errors: Mutex::new(VecDeque::new()),
+            config_dir,
         })
     }
 
@@ -425,7 +469,37 @@ impl Service {
         value: &CapabilityValue,
     ) -> Result<WriteOutcome> {
         let mut hub = self.hub.lock().expect("hub mutex poisoned");
+        // Snapshot what we are about to replace *before* touching the device:
+        // a failed write must not leave a bogus entry on the undo stack, and a
+        // successful one needs this value to be revertible.
+        let descriptor = hub
+            .devices()
+            .into_iter()
+            .find(|dev| dev.id == device)
+            .and_then(|dev| dev.capability(capability).cloned());
+        let previous = if descriptor.as_ref().is_some_and(|cap| cap.access.can_read()) {
+            hub.read(device, capability).ok()
+        } else {
+            None
+        };
         let outcome = hub.write(device, capability, value)?;
+        if let (Some(cap), Some(previous)) = (descriptor, previous) {
+            if &previous != value {
+                let entry = UndoEntry {
+                    capability: capability.to_string(),
+                    cap_type: cap.cap_type.clone(),
+                    label: cap.label.clone(),
+                    previous,
+                    at_ms: now_ms(),
+                };
+                let mut history = self.history.lock().expect("history mutex poisoned");
+                let stack = history.entry(device.to_string()).or_default();
+                stack.push_back(entry);
+                while stack.len() > MAX_HISTORY {
+                    stack.pop_front();
+                }
+            }
+        }
         if outcome.readback_error.is_some() {
             tracing::warn!(
                 device,
@@ -441,6 +515,110 @@ impl Service {
             );
         }
         Ok(outcome)
+    }
+
+    /// Undo stack for one device, newest first.
+    pub fn history(&self, device: &str) -> hub_proto::HistoryResult {
+        let history = self.history.lock().expect("history mutex poisoned");
+        let entries = history
+            .get(device)
+            .map(|stack| {
+                stack
+                    .iter()
+                    .rev()
+                    .map(|entry| hub_proto::HistoryEntry {
+                        capability: entry.capability.clone(),
+                        cap_type: entry.cap_type.clone(),
+                        label: entry.label.clone(),
+                        value: entry.previous.clone(),
+                        at_ms: entry.at_ms,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        hub_proto::HistoryResult {
+            device: device.to_string(),
+            entries,
+        }
+    }
+
+    /// Write the stored previous value back and drop that entry.
+    ///
+    /// The entry goes back onto the stack when the write fails, so a transient
+    /// error does not silently discard the user's undo.
+    pub fn undo(&self, device: &str) -> Result<hub_proto::UndoResult> {
+        let entry = {
+            let mut history = self.history.lock().expect("history mutex poisoned");
+            let stack = history
+                .get_mut(device)
+                .filter(|stack| !stack.is_empty())
+                .ok_or_else(|| HubError::invalid_value("nothing to undo for this device"))?;
+            stack.pop_back().expect("stack is not empty")
+        };
+
+        let outcome = {
+            let mut hub = self.hub.lock().expect("hub mutex poisoned");
+            hub.write(device, &entry.capability, &entry.previous)
+        };
+
+        match outcome {
+            Ok(outcome) => Ok(hub_proto::UndoResult {
+                device: device.to_string(),
+                capability: entry.capability,
+                cap_type: entry.cap_type,
+                label: entry.label,
+                value: outcome.value,
+                matched: outcome.matched,
+            }),
+            Err(err) => {
+                let mut history = self.history.lock().expect("history mutex poisoned");
+                if let Some(stack) = history.get_mut(device) {
+                    stack.push_back(entry);
+                }
+                Err(err)
+            }
+        }
+    }
+
+    /// Everything the diagnostics section renders.
+    pub fn diagnostics(&self) -> hub_proto::DiagnosticsResult {
+        let adapters = {
+            let hub = self.hub.lock().expect("hub mutex poisoned");
+            hub.adapters()
+        };
+        let errors = self.recent_errors.lock().expect("errors mutex poisoned");
+        hub_proto::DiagnosticsResult {
+            hub_version: env!("CARGO_PKG_VERSION").to_string(),
+            protocol: PROTOCOL_VERSION,
+            pid: std::process::id(),
+            config_dir: self.config_dir.display().to_string(),
+            pipe: hub_proto::pipe_name(),
+            adapters,
+            recent_errors: errors
+                .iter()
+                .map(|error| hub_proto::DiagnosticsError {
+                    at_ms: error.at_ms,
+                    method: error.method.clone(),
+                    kind: error.kind.clone(),
+                    message: error.message.clone(),
+                })
+                .collect(),
+        }
+    }
+
+    /// Record a failed RPC for the diagnostics section. Called by the server
+    /// so the ring buffer sees exactly what the client saw.
+    pub fn record_error(&self, method: &str, kind: Option<String>, message: &str) {
+        let mut errors = self.recent_errors.lock().expect("errors mutex poisoned");
+        errors.push_front(RecentError {
+            at_ms: now_ms(),
+            method: method.to_string(),
+            kind,
+            message: message.to_string(),
+        });
+        while errors.len() > MAX_RECENT_ERRORS {
+            errors.pop_back();
+        }
     }
 
     pub fn set_enabled(&self, adapter: &str, enabled: bool) -> Result<DevicesResult> {

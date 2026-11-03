@@ -4,6 +4,42 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.5.0 — device pages, undo and diagnostics
+
+### Added
+
+- Device detail pages: clicking a card (or pressing Enter on it) opens the
+  device, capabilities are grouped by their `cap_type` prefix, and Escape or the
+  back button returns to the grid with focus restored to the card. Keymap
+  editing keeps working inside the detail page.
+- Per-device undo: `hubd` records the value each panel write replaced (20 per
+  device, in memory) and `device.history` / `device.undo` expose it. The detail
+  header shows what the undo would restore ("Undo Brightness 40%") and how many
+  steps remain. Scene writes are not recorded (D34).
+- Global `Ctrl+Alt+M` to open the panel. When another program already owns the
+  combination, the core falls back to `Ctrl+Alt+Shift+M` and logs which one is
+  live (D35).
+- Diagnostics block in the settings page: hub version, protocol, pid, pipe,
+  config directory, every adapter with its state, and the last 20 failed RPCs
+  with time, method and typed kind. Refresh and Copy are provided (D36).
+- Writes whose descriptor declares side effects (signal renegotiation, audio
+  route change) now ask for confirmation, with an opt-out remembered per
+  `cap_type` in `localStorage`.
+- Failed writes explain the failure in a sentence plus its typed kind, and offer
+  Retry with the same value.
+
+### Changed
+
+- Cards are keyboard reachable (`tabindex`, Enter/Space), the detail page moves
+  focus to Back on open and back to the card on close.
+- Read-only capabilities no longer render a disabled slider; booleans still show
+  a disabled switch (documented limitation).
+
+### Fixed
+
+- Undoing a write left the previous "Synced · read back …" text on the row,
+  describing the value that had just been undone; the undo now clears it.
+
 ## 0.4.0 — panel preferences
 
 ### Added
