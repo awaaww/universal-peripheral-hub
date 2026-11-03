@@ -36,6 +36,9 @@ const MOUSE_CONTROL_REPORT_LEN: u16 = 17;
 const LATENCY_MS: u32 = 120;
 /// `mouse.conflict` is a cheap process observation, not a device round trip.
 const CONFLICT_LATENCY_MS: u32 = 0;
+/// The dongle writes EEPROM asynchronously; reading it back too early returns
+/// the previous value, so leave the block a moment to commit.
+const WRITE_SETTLE_MS: u64 = 150;
 
 /// Capabilities a concrete collection answered during discovery.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -329,6 +332,13 @@ impl<T: Transport> Core<T> {
         protocol::decode_eeprom(&reply)
     }
 
+    /// The raw block, used for read-modify-write: the fields we cannot decode
+    /// must survive a write untouched.
+    fn read_block(&mut self, device: &RawDevice) -> Result<[u8; 10]> {
+        let reply = self.query_reply(device, &protocol::query_eeprom(0, 10))?;
+        protocol::decode_eeprom_block(&reply)
+    }
+
     /// One write + read, retrying once on a retryable failure. A sleeping mouse
     /// drops the first reply; the retry is the documented recovery.
     fn query_reply(&mut self, device: &RawDevice, frame: &[u8]) -> Result<Vec<u8>> {
@@ -378,28 +388,92 @@ impl<T: Transport> Core<T> {
         }
     }
 
-    pub fn write(
-        &mut self,
-        device: &str,
-        capability: &str,
-        _value: &CapabilityValue,
-    ) -> Result<()> {
-        let state = self
-            .devices
-            .get(device)
-            .ok_or_else(|| HubError::unknown_device(device.to_string()))?;
-        let descriptor = state.descriptor.capability(capability).ok_or_else(|| {
-            HubError::unknown_capability(format!("{device}: unknown capability `{capability}`"))
-        })?;
-        if !descriptor.access.can_write() {
+    pub fn write(&mut self, device: &str, capability: &str, value: &CapabilityValue) -> Result<()> {
+        let raw = {
+            let state = self
+                .devices
+                .get(device)
+                .ok_or_else(|| HubError::unknown_device(device.to_string()))?;
+            let descriptor = state.descriptor.capability(capability).ok_or_else(|| {
+                HubError::unknown_capability(format!("{device}: unknown capability `{capability}`"))
+            })?;
+            if !descriptor.access.can_write() {
+                return Err(HubError::new(
+                    ErrorKind::ReadOnly,
+                    format!("ATK device {device} exposes `{capability}` read-only"),
+                ));
+            }
+            state.raw.clone()
+        };
+
+        // The firmware stores value/complement pairs; a single-byte write would
+        // leave the other fields inconsistent. Read the block, patch the two
+        // bytes that belong to this setting, send the whole block back.
+        let block = self.read_block(&raw)?;
+        let patched = match capability {
+            "report_rate" => {
+                let hertz = match value {
+                    CapabilityValue::Enum(text) => text.parse::<u16>().map_err(|_| {
+                        HubError::invalid_value(format!("`{text}` is not a report rate in Hz"))
+                    })?,
+                    other => {
+                        return Err(HubError::invalid_value(format!(
+                            "report_rate takes an enum, got {}",
+                            other.type_name()
+                        )))
+                    }
+                };
+                let mask = protocol::REPORT_RATES
+                    .iter()
+                    .find(|(_, hz)| *hz == hertz)
+                    .map(|(bit, _)| *bit)
+                    .ok_or_else(|| {
+                        HubError::invalid_value(format!(
+                            "{hertz} Hz is not a supported report rate"
+                        ))
+                    })?;
+                protocol::with_report_rate(&block, mask)
+            }
+            "dpi_slot" => {
+                let slot = match value {
+                    CapabilityValue::Int(number) => u8::try_from(*number).map_err(|_| {
+                        HubError::invalid_value(format!("DPI slot {number} is out of range"))
+                    })?,
+                    other => {
+                        return Err(HubError::invalid_value(format!(
+                            "dpi_slot takes an integer, got {}",
+                            other.type_name()
+                        )))
+                    }
+                };
+                let max_slot = block[2].clamp(1, 8);
+                if !(1..=max_slot).contains(&slot) {
+                    return Err(HubError::invalid_value(format!(
+                        "DPI slot {slot} is outside 1..={max_slot}"
+                    )));
+                }
+                protocol::with_dpi_slot(&block, slot)
+            }
+            other => {
+                return Err(HubError::unsupported(format!(
+                    "ATK capability `{other}` is not writable"
+                )))
+            }
+        };
+
+        self.query_reply(&raw, &protocol::write_eeprom(0, &patched))?;
+        std::thread::sleep(Duration::from_millis(WRITE_SETTLE_MS));
+
+        let after = self.read_block(&raw)?;
+        if after != patched {
             return Err(HubError::new(
-                ErrorKind::ReadOnly,
-                format!("ATK device {device} exposes `{capability}` read-only"),
+                ErrorKind::Transient,
+                format!(
+                    "ATK: wrote `{capability}` but read back a different block: sent {patched:02X?}, got {after:02X?}"
+                ),
             ));
         }
-        Err(HubError::unsupported(
-            "ATK writes are not implemented in this milestone",
-        ))
+        Ok(())
     }
 }
 
@@ -470,18 +544,20 @@ fn describe(
                 label: format!("{hertz} Hz"),
             })
             .collect();
-        capabilities.push(descriptor(
+        let mut report_rate = descriptor(
             "report_rate",
             "mouse.report_rate",
             "Report rate",
             CapabilityKind::Enum { options },
             LATENCY_MS,
-        ));
+        );
+        report_rate.access = Access::ReadWrite;
+        capabilities.push(report_rate);
     }
     if support.dpi_slot {
         // The firmware exposes a 1-based slot index; the slot values themselves
         // are still undecoded, so the real DPI is deliberately not advertised.
-        capabilities.push(descriptor(
+        let mut dpi_slot = descriptor(
             "dpi_slot",
             "mouse.dpi_slot",
             "DPI slot",
@@ -492,7 +568,9 @@ fn describe(
                 unit: None,
             },
             LATENCY_MS,
-        ));
+        );
+        dpi_slot.access = Access::ReadWrite;
+        capabilities.push(dpi_slot);
     }
     if atk_hub_running {
         capabilities.push(descriptor(

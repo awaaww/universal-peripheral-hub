@@ -15,9 +15,11 @@ All notable changes to this project are documented here. The format follows
 - `hub-core`: `Text` capability kind (`{ "type": "text", "value": … }`), used for
   firmware versions.
 - `adapters/atk`: first real HID adapter (ATK wireless mouse, `373B:11FE`),
-  read-only in this milestone: battery %, charging, wireless link, firmware
-  version, report rate and the active DPI slot. Ships `--probe` for a headless
-  one-device dump.
+  battery %, charging, wireless link, firmware version, report rate and the
+  active DPI slot. Report rate and the DPI slot are writable through the same
+  read-modify-write EEPROM block the vendor app uses; numeric DPI is not
+  advertised because the firmware does not expose the per-slot values. Ships
+  `--probe` for a headless one-device dump.
 - `hubd --selftest --adapter atk` enumerates the adapter and prints every
   capability value, exiting non-zero when the helper is missing or no device
   answers.

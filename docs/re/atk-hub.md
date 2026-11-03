@@ -353,3 +353,24 @@ not a verdict:
 * we do not yet know whether ATK HUB and this adapter can coexist for *writes*;
   that question is deferred to stage 3b, where a write is attempted with and
   without ATK HUB running and the observed values are compared.
+
+## Stage 3 write path (2026-11-03)
+
+EEPROM writes are the same 16-byte frame with opcode `0x07` (`SetEEPROM`) and
+the whole 10-byte block in the data field. The block stores every value as a
+`value, 85 - value` pair, so the only safe write is read-modify-write:
+
+1. `GetEEPROM(0x08)` at address 0, length 10, and check all five complements.
+2. Patch the pair that belongs to the setting (`report_rate` = bytes 0/1,
+   `current_dpi_slot` = bytes 4/5); leave every other byte alone.
+3. Send `SetEEPROM(0x07)` with address 0 and the patched block.
+4. Sleep 150 ms, read the block again, and fail with `transient` if it is not
+   byte-identical. The hub performs its own read-back on top of that.
+
+`report_rate` is the firmware bitmask (`1,2,4,8,16,32,64` -> 1000..8000 Hz), not
+an index. The DPI slot is a 1-based index bounded by byte 2 (`max_dpi_slot`).
+
+Numeric DPI stays unavailable: the per-slot blocks at `0x0C/0x14/0x1C/0x24`
+answer `0xFF` (length 6/8) or ten zero bytes plus the echoed address (length
+12) on this firmware, so there is no honest number to show. The adapter exposes
+the slot only.

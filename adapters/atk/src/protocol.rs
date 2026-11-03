@@ -41,6 +41,9 @@ pub const OP_WIRELESS_ONLINE: u8 = 0x03;
 pub const OP_BATTERY: u8 = 0x04;
 /// EEPROM block read (address + block length).
 pub const OP_EEPROM_READ: u8 = 0x08;
+/// EEPROM block write. The data field carries the same value/complement pairs
+/// the firmware returns, so a write is "read the block, patch it, send it back".
+pub const OP_EEPROM_WRITE: u8 = 0x07;
 /// Firmware version.
 pub const OP_VERSION: u8 = 0x12;
 /// Payload bytes after the report id.
@@ -175,6 +178,49 @@ pub fn decode_eeprom(reply: &[u8]) -> Result<EepromSettings> {
         current_dpi_slot: data[4],
         button_mode: data[6],
     })
+}
+
+/// EEPROM write frame for one whole block (`OP_EEPROM_WRITE`).
+pub fn write_eeprom(address: u16, block: &[u8]) -> Vec<u8> {
+    assemble(OP_EEPROM_WRITE, address, block.len() as u8, block)
+}
+
+/// The raw 10-byte block at address 0, with its complement bytes checked.
+///
+/// Writes must preserve the fields we do not understand, so the caller needs
+/// the bytes rather than [`decode_eeprom`]'s projections.
+pub fn decode_eeprom_block(reply: &[u8]) -> Result<[u8; 10]> {
+    check_reply(reply, OP_EEPROM_READ, 16, "EEPROM")?;
+    let mut block = [0u8; 10];
+    block.copy_from_slice(&reply[6..16]);
+    for index in [0, 2, 4, 6, 8] {
+        let expected = 85u8.wrapping_sub(block[index]);
+        if block[index + 1] != expected {
+            return Err(protocol(format!(
+                "EEPROM block byte {} is 0x{:02X}, expected complement 0x{expected:02X}",
+                index + 1,
+                block[index + 1]
+            )));
+        }
+    }
+    Ok(block)
+}
+
+/// Patch the report-rate mask in a block, keeping every other field and both
+/// complement bytes consistent.
+pub fn with_report_rate(block: &[u8; 10], mask: u8) -> [u8; 10] {
+    let mut next = *block;
+    next[0] = mask;
+    next[1] = 85u8.wrapping_sub(mask);
+    next
+}
+
+/// Patch the 1-based active DPI slot in a block.
+pub fn with_dpi_slot(block: &[u8; 10], slot: u8) -> [u8; 10] {
+    let mut next = *block;
+    next[4] = slot;
+    next[5] = 85u8.wrapping_sub(slot);
+    next
 }
 
 /// Map a single-bit report-rate mask to its frequency. Multi-bit masks do not
@@ -418,6 +464,52 @@ mod tests {
             }
         );
         assert_eq!(report_rate_hz(settings.report_rate_mask), Some(250));
+    }
+
+    #[test]
+    fn eeprom_block_decodes_the_raw_bytes_a_write_must_preserve() {
+        assert_eq!(
+            decode_eeprom_block(EEPROM_REPLY).expect("verified reply decodes"),
+            [4, 81, 4, 81, 1, 84, 0, 85, 0, 85]
+        );
+    }
+
+    #[test]
+    fn report_rate_patch_touches_only_the_rate_pair() {
+        let block = decode_eeprom_block(EEPROM_REPLY).expect("verified reply decodes");
+        let patched = with_report_rate(&block, 1);
+        assert_eq!(patched, [1, 84, 4, 81, 1, 84, 0, 85, 0, 85]);
+        assert_eq!(report_rate_hz(patched[0]), Some(1000));
+    }
+
+    #[test]
+    fn dpi_slot_patch_touches_only_the_slot_pair() {
+        let block = decode_eeprom_block(EEPROM_REPLY).expect("verified reply decodes");
+        let patched = with_dpi_slot(&block, 3);
+        assert_eq!(patched, [4, 81, 4, 81, 3, 82, 0, 85, 0, 85]);
+    }
+
+    #[test]
+    fn eeprom_write_frame_carries_the_whole_block() {
+        let block = decode_eeprom_block(EEPROM_REPLY).expect("verified reply decodes");
+        let frame = write_eeprom(0, &with_report_rate(&block, 1));
+        assert_eq!(frame[0], REPORT_ID);
+        assert_eq!(frame[1], OP_EEPROM_WRITE);
+        assert_eq!(frame[3], 0);
+        assert_eq!(frame[4], 0);
+        assert_eq!(frame[5], 10);
+        assert_eq!(&frame[6..16], &[1, 84, 4, 81, 1, 84, 0, 85, 0, 85]);
+        let sum = frame[1..17]
+            .iter()
+            .fold(0u8, |acc, byte| acc.wrapping_add(*byte));
+        assert_eq!(sum, CHECKSUM_TARGET);
+    }
+
+    #[test]
+    fn eeprom_block_rejects_a_broken_complement() {
+        let mut reply = EEPROM_REPLY.to_vec();
+        reply[7] = 0x50; // complement of 0x04 must be 0x51
+        assert_protocol(decode_eeprom_block(&reply));
     }
 
     #[test]

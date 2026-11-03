@@ -299,3 +299,13 @@ the read-only `mouse.conflict` bool when ATK HUB is present, an empty list
 otherwise. The panel therefore shows "ATK HUB is running" instead of an empty
 adapter row, and `Rescan` re-enumerates after the device wakes up.
 It never invents battery or DPI values for a device it could not talk to.
+
+## D28 — EEPROM writes are read-modify-write of the whole block
+
+The ATK mouse stores settings as `value, 85 - value` pairs inside one 10-byte
+EEPROM block. Writing a single field would desynchronise the complements, so
+every write reads the block, patches only the pair belonging to the capability,
+writes the block back with opcode `0x07`, waits 150 ms for the dongle to commit,
+then reads it back and fails `transient` on any mismatch. This is the same
+sequence the vendor app performs; the hub also re-reads after every write, so a
+silent failure surfaces in the panel instead of looking applied.
